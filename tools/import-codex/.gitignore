@@ -1,0 +1,19 @@
+node_modules/
+*.log
+*.bak
+db.json.bak-*
+db.json.tmp
+
+# Never commit real OAuth tokens
+tokens/*.json
+tokens/*.zip
+!tokens/.gitkeep
+
+# Local machine pin (copy repo.txt.example -> repo.txt and edit)
+repo.txt
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
