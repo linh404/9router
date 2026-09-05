@@ -130,7 +130,7 @@ export async function POST(request) {
       parsed = parsedToWritable(parseTOML(existingConfig));
     } catch { /* No existing config */ }
 
-    // Update only 9Router related fields (api_key goes to auth.json, not config.toml)
+    // Update only 9Router related fields (api key travels via http_headers, not auth.json)
     parsed.model = model;
     parsed.model_provider = "9router";
 
@@ -161,36 +161,22 @@ export async function POST(request) {
     const providerConfig = existingProvider && typeof existingProvider === "object" && !Array.isArray(existingProvider)
       ? existingProvider
       : {};
+    // Custom providers ignore auth.json - the key must travel as a static header
     setNestedSection(parsed, "model_providers.9router", {
       ...providerConfig,
       name: "9Router",
       base_url: normalizedBaseUrl,
       wire_api: "responses",
+      http_headers: { Authorization: `Bearer ${apiKey}` },
     });
 
-    // Add subagent configuration
-    const effectiveSubagentModel = subagentModel || model;
-    setNestedSection(parsed, "agents.subagent", {
-      description: "Runs focused tasks delegated by Codex.",
-      model: effectiveSubagentModel,
-    });
+    // Subagent model is a scalar under [agents]; agents.<role> now means a custom role
+    deleteNestedSection(parsed, "agents.subagent");
+    setNestedSection(parsed, "agents.default_subagent_model", subagentModel || model);
 
     // Write merged config
     const configContent = stringifyTOML(parsed);
     await fs.writeFile(configPath, configContent);
-
-    // Update auth.json with OPENAI_API_KEY (Codex reads this first)
-    const authPath = getCodexAuthPath();
-    let authData = {};
-    try {
-      const existingAuth = await fs.readFile(authPath, "utf-8");
-      authData = JSON.parse(existingAuth);
-    } catch { /* No existing auth */ }
-    
-    // Force apikey mode (keep existing tokens untouched for ChatGPT login reuse)
-    authData.OPENAI_API_KEY = apiKey;
-    authData.auth_mode = "apikey";
-    await fs.writeFile(authPath, JSON.stringify(authData, null, 2));
 
     return NextResponse.json({
       success: true,
@@ -232,7 +218,8 @@ export async function DELETE() {
     // Remove 9router provider section
     deleteNestedSection(parsed, "model_providers.9router");
 
-    // Remove subagent configuration
+    // Remove subagent configuration (both the current key and the legacy role form)
+    deleteNestedSection(parsed, "agents.default_subagent_model");
     deleteNestedSection(parsed, "agents.subagent");
 
     // Write updated config
