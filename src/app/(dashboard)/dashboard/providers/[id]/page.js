@@ -72,6 +72,7 @@ export default function ProviderDetailPage() {
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
+  const [autoRefreshUpdating, setAutoRefreshUpdating] = useState(() => new Set());
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [liveModels, setLiveModels] = useState([]);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
@@ -503,6 +504,45 @@ export default function ProviderDetailPage() {
 
   const handleAutoPingConnection = (connectionId, on) => {
     saveAutoPing({ ...autoPing, connections: { ...autoPing.connections, [connectionId]: on } });
+  };
+
+  const handleAutoRefreshConnection = async (connectionId, on) => {
+    if (providerId !== "codex") return;
+    const connection = connections.find((item) => item.id === connectionId);
+    if (!connection) return;
+    if (autoRefreshUpdating.has(connectionId)) return;
+
+    setAutoRefreshUpdating((prev) => new Set(prev).add(connectionId));
+
+    try {
+      const res = await fetch(`/api/providers/${connectionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerSpecificData: { autoRefreshDaily: on },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        notify.error(data.error || "Failed to update daily refresh");
+        return;
+      }
+
+      setConnections((prev) => prev.map((item) => (
+        item.id === connectionId
+          ? { ...item, providerSpecificData: { ...item.providerSpecificData, autoRefreshDaily: on } }
+          : item
+      )));
+      notify.success(on ? "Daily Codex refresh enabled" : "Daily Codex refresh disabled");
+    } catch (error) {
+      notify.error(error?.message || "Failed to update daily refresh");
+    } finally {
+      setAutoRefreshUpdating((prev) => {
+        const next = new Set(prev);
+        next.delete(connectionId);
+        return next;
+      });
+    }
   };
 
   useEffect(() => {
@@ -1021,6 +1061,11 @@ export default function ProviderDetailPage() {
                   on: autoPing.connections[conn.id] === true,
                   onToggle: (on) => handleAutoPingConnection(conn.id, on),
                   provider: providerId,
+                } : null}
+                autoRefresh={providerId === "codex" && conn.authType === "oauth" ? {
+                  on: conn.providerSpecificData?.autoRefreshDaily === true,
+                  onToggle: (on) => handleAutoRefreshConnection(conn.id, on),
+                  updating: autoRefreshUpdating.has(conn.id),
                 } : null}
                 onUpdateProxy={async (proxyPoolId) => {
                   try {

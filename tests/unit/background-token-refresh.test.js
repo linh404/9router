@@ -90,6 +90,69 @@ describe("selectConnectionsNeedingRefresh", () => {
     );
     expect(list).toHaveLength(1);
   });
+
+  it("selects an enabled Codex daily refresh after 24 hours", async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    const list = selectConnectionsNeedingRefresh([
+      conn({
+        provider: "codex",
+        expiresAt: new Date(NOW + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lastRefreshAt: new Date(NOW - 25 * 60 * 60 * 1000).toISOString(),
+        providerSpecificData: { autoRefreshDaily: true },
+      }),
+    ], NOW);
+
+    expect(list).toHaveLength(1);
+  });
+
+  it("selects an enabled Codex daily refresh when it has never refreshed", async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    const list = selectConnectionsNeedingRefresh([
+      conn({
+        provider: "codex",
+        expiresAt: new Date(NOW + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        providerSpecificData: { autoRefreshDaily: true },
+      }),
+    ], NOW);
+
+    expect(list).toHaveLength(1);
+  });
+
+  it("does not apply the daily setting to non-Codex providers", async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    const list = selectConnectionsNeedingRefresh([
+      conn({
+        provider: "grok-cli",
+        expiresAt: new Date(NOW + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lastRefreshAt: new Date(NOW - 25 * 60 * 60 * 1000).toISOString(),
+        providerSpecificData: { autoRefreshDaily: true },
+      }),
+    ], NOW);
+
+    expect(list).toHaveLength(0);
+  });
+
+  it("does not select an enabled Codex daily refresh before 24 hours", async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    const list = selectConnectionsNeedingRefresh([
+      conn({
+        provider: "codex",
+        expiresAt: new Date(NOW + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        lastRefreshAt: new Date(NOW - 23 * 60 * 60 * 1000).toISOString(),
+        providerSpecificData: { autoRefreshDaily: true },
+      }),
+    ], NOW);
+
+    expect(list).toHaveLength(0);
+  });
 });
 
 describe("runBackgroundTokenRefreshTick", () => {

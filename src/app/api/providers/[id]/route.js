@@ -106,6 +106,12 @@ export async function PUT(request, { params }) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
 
+    if (Object.prototype.hasOwnProperty.call(providerSpecificData || {}, "autoRefreshDaily")) {
+      if (existing.provider !== "codex" || existing.authType !== "oauth" || typeof providerSpecificData.autoRefreshDaily !== "boolean") {
+        return NextResponse.json({ error: "Daily refresh is only available for Codex OAuth connections" }, { status: 400 });
+      }
+    }
+
     const proxyConfig = normalizeProxyConfig(body);
     if (proxyConfig.error) {
       return NextResponse.json({ error: proxyConfig.error }, { status: 400 });

@@ -6,7 +6,7 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null, autoRefresh = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -291,6 +291,20 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
               </button>
             </Tooltip>
           )}
+          {autoRefresh && (
+            <Tooltip text="Refresh this Codex connection once every 24 hours">
+              <div className={`flex w-full flex-col items-center rounded px-2 py-1 transition-colors ${autoRefresh.on ? "text-primary" : "text-text-muted"}`}>
+                <Toggle
+                  size="sm"
+                  checked={autoRefresh.on}
+                  onChange={autoRefresh.onToggle}
+                  disabled={autoRefresh.updating}
+                  title={autoRefresh.on ? "Disable daily refresh" : "Enable daily refresh"}
+                />
+                <span className="mt-0.5 text-[10px] leading-tight">Daily refresh</span>
+              </div>
+            </Tooltip>
+          )}
           <button onClick={onEdit} className="flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5">
             <span className="material-symbols-outlined text-[18px]">edit</span>
             <span className="text-[10px] leading-tight">Edit</span>
@@ -348,5 +362,10 @@ ConnectionRow.propTypes = {
     on: PropTypes.bool,
     onToggle: PropTypes.func,
     provider: PropTypes.string,
+  }),
+  autoRefresh: PropTypes.shape({
+    on: PropTypes.bool,
+    onToggle: PropTypes.func,
+    updating: PropTypes.bool,
   }),
 };
