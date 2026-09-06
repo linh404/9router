@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
+import {
+  getCodexExpiryWarning,
+  markCodexExpiryNotificationSent,
+  wasCodexExpiryNotificationSent,
+} from "@/shared/utils/codexTokenExpiry";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
 
@@ -36,6 +41,41 @@ export default function DashboardLayout({ children }) {
   const pathname = usePathname();
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
+  const addNotification = useNotificationStore((state) => state.addNotification);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkCodexExpiry = async () => {
+      try {
+        const response = await fetch("/api/providers", { cache: "no-store" });
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+        for (const connection of data.connections || []) {
+          const warning = getCodexExpiryWarning(connection);
+          if (!warning || wasCodexExpiryNotificationSent(connection, warning)) continue;
+
+          markCodexExpiryNotificationSent(connection, warning);
+          const displayName = connection.name || connection.email || "Codex connection";
+          addNotification({
+            type: "warning",
+            title: "Codex token expiring soon",
+            message: `${displayName} expires in ${warning.days} day${warning.days === 1 ? "" : "s"}. Refresh the Codex token to keep this connection working.`,
+            duration: 10000,
+          });
+        }
+      } catch {
+        // Expiry warnings are best effort and must not affect the dashboard.
+      }
+    };
+
+    checkCodexExpiry();
+    const interval = setInterval(checkCodexExpiry, 10 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [addNotification]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-bg">

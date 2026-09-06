@@ -84,8 +84,37 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
       ? connection.displayName.trim()
       : null;
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const tokenExpiry = connection.provider === "codex" && connection.expiresAt
+    ? new Date(connection.expiresAt)
+    : null;
+  const tokenExpiryMs = tokenExpiry?.getTime?.() || null;
+  const tokenExpiryLabel = tokenExpiryMs && Number.isFinite(tokenExpiryMs)
+    ? tokenExpiry.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+    : null;
+  const tokenExpiryClass = tokenExpiryMs && tokenExpiryMs <= nowMs
+    ? "text-red-500"
+    : tokenExpiryMs && tokenExpiryMs - nowMs <= 3 * 24 * 60 * 60 * 1000
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-text-muted";
+  const tokenExpiryPrefix = tokenExpiryMs && tokenExpiryMs <= nowMs
+    ? "Token expired"
+    : "Token expires";
+
   // Use useState + useEffect for impure Date.now() to avoid calling during render
   const [isCooldown, setIsCooldown] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Get earliest model lock timestamp (useEffect handles the Date.now() comparison)
   const modelLockUntil = Object.entries(connection)
@@ -207,6 +236,11 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
                 </span>
               )}
             </div>
+          )}
+          {tokenExpiryLabel && (
+            <p className={`mt-1 text-[11px] ${tokenExpiryClass}`}>
+              {tokenExpiryPrefix}: {tokenExpiryLabel}
+            </p>
           )}
         </div>
       </div>

@@ -11,6 +11,7 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
+import { useNotificationStore } from "@/store/notificationStore";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
@@ -22,6 +23,7 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
+import CodexRefreshModal from "./CodexRefreshModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
@@ -49,6 +51,8 @@ export default function ProviderDetailPage() {
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
+  const [showCodexRefresh, setShowCodexRefresh] = useState(false);
+  const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
   const [showBulkImportGrokCli, setShowBulkImportGrokCli] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
@@ -82,6 +86,7 @@ export default function ProviderDetailPage() {
   const stopOneByOneRef = useRef(false);
   const [importingQoderModels, setImportingQoderModels] = useState(false);
   const { copied, copy } = useCopyToClipboard();
+  const notify = useNotificationStore();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
 
@@ -345,6 +350,53 @@ export default function ProviderDetailPage() {
       setLoading(false);
     }
   }, [providerId, isCompatible]);
+
+  const handleCodexRefresh = async (mode) => {
+    setCodexRefreshLoading(true);
+    try {
+      const response = await fetch("/api/oauth/codex/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const raw = await response.text();
+      let data = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = { error: "Invalid refresh response" };
+      }
+
+      if (!response.ok) {
+        notify.error(data.error || "Codex token refresh failed");
+        return;
+      }
+
+      if (mode === "json") {
+        const blob = new Blob([raw], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `codex-refreshed-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } else {
+        await fetchConnections();
+      }
+
+      const summary = data.summary || {};
+      notify.success(
+        `Codex refresh complete: ${summary.success || 0} succeeded, ${summary.failed || 0} failed${summary.skipped ? `, ${summary.skipped} skipped` : ""}.`
+      );
+      setShowCodexRefresh(false);
+    } catch (error) {
+      notify.error(error?.message || "Codex token refresh failed");
+    } finally {
+      setCodexRefreshLoading(false);
+    }
+  };
 
   const handleUpdateNode = async (formData) => {
     try {
@@ -1438,6 +1490,17 @@ export default function ProviderDetailPage() {
               )}
               {connections.length > 0 && (
                 <>
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon="refresh"
+                      onClick={() => setShowCodexRefresh(true)}
+                      disabled={codexRefreshLoading}
+                    >
+                      Refresh Codex tokens
+                    </Button>
+                  )}
                   {selectedConnectionIds.length > 0 && (
                     <Button
                       size="sm"
@@ -1794,6 +1857,17 @@ export default function ProviderDetailPage() {
           isOpen={showBulkImportCodex}
           onClose={() => setShowBulkImportCodex(false)}
           onSuccess={fetchConnections}
+        />
+      )}
+
+      {providerId === "codex" && (
+        <CodexRefreshModal
+          isOpen={showCodexRefresh}
+          loading={codexRefreshLoading}
+          onClose={() => {
+            if (!codexRefreshLoading) setShowCodexRefresh(false);
+          }}
+          onRefresh={handleCodexRefresh}
         />
       )}
 
