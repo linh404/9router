@@ -29,8 +29,21 @@ export const UPDATER_CONFIG = {
   waitForExitMinMs: 5000,
   waitForExitMaxMs: 20000,
   waitForExitCheckMs: 500,
-  appPort: 20128,
+  appPort: process.env.NEXT_PUBLIC_APP_PORT || process.env.PORT || 20128,
 };
+
+// Port the local 9Router instance actually serves on. The dashboard is
+// normally served by that same instance, so window.location is the most
+// accurate source; fall back to the configured appPort (env-aware).
+export function getLocalAppPort() {
+  if (typeof window !== "undefined") {
+    const { hostname, port } = window.location;
+    if ((hostname === "localhost" || hostname === "127.0.0.1") && port) {
+      return port;
+    }
+  }
+  return String(UPDATER_CONFIG.appPort);
+}
 
 // Theme configuration
 export const THEME_CONFIG = {
