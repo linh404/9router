@@ -168,6 +168,20 @@ function buildCliPackage() {
     console.log(`✅ Version already synced: ${cliPkg.version}\n`);
   }
 
+  // Step 0b: Sync CLI static PROVIDER_MODELS table from the app registry so the
+  // packaged CLI menu always ships the latest model catalog (single source of truth).
+  console.log("0️⃣ b Syncing CLI provider models from registry...");
+  try {
+    execSync("node scripts/sync-cli-provider-models.mjs", {
+      stdio: "inherit",
+      cwd: appDir,
+    });
+    console.log("✅ CLI provider models synced\n");
+  } catch (error) {
+    console.error("❌ CLI provider models sync failed");
+    process.exit(1);
+  }
+
   // Step 1: Build app with Next.js (workspace tracing root → traced node_modules in standalone).
   console.log("1️⃣  Building Next.js app...");
   try {
