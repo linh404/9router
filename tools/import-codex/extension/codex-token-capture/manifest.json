@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Codex OAuth Token Capture",
+  "version": "1.0.4",
+  "description": "Manual OAuth login, then capture the resulting Codex token bundle locally.",
+  "permissions": [
+    "storage",
+    "downloads",
+    "tabs",
+    "webNavigation",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://auth.openai.com/*",
+    "http://localhost:1455/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Codex OAuth Token Capture",
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>Codex token</title>
+  <style>
+    body { width: 260px; margin: 0; padding: 14px; font: 13px Segoe UI, sans-serif; color: #17202a; }
+    button { width: 100%; padding: 8px; border: 0; border-radius: 6px; background: #1769aa; color: white; cursor: pointer; }
+    button.secondary { margin-top: 6px; background: #667085; }
+    #status { margin-top: 10px; line-height: 1.4; white-space: pre-wrap; }
+    #logs { display: none; max-height: 260px; overflow: auto; margin-top: 8px; padding: 6px; background: #f2f4f7; font: 10px Consolas, monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div style="margin-bottom:8px;font-weight:600">Codex Token Capture <span style="font-size:11px;color:#667085">v1.0.4</span></div>
+  <button id="start">Bắt đầu OAuth</button>
+  <button id="showLogs" class="secondary">Xem log chi tiết</button>
+  <div id="status">Mày tự đăng nhập và nhập 2FA; extension chỉ bắt callback và tải JSON token.</div>
+  <pre id="logs"></pre>
+  <script src="popup.js"></script>
+</body>
+</html>
