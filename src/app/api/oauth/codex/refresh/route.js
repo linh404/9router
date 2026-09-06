@@ -3,6 +3,7 @@ import { getProviderConnections } from "@/models";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { refreshProviderCredentials } from "open-sse/services/oauthCredentialManager.js";
 import { recordCodexRefreshFailure } from "@/sse/services/codexRefreshLog";
+import { toCodexImportAccount } from "@/lib/oauth/codexExport";
 
 export const dynamic = "force-dynamic";
 
@@ -24,27 +25,7 @@ function publicResult(connection, status, extra = {}) {
 }
 
 function exportAccount(connection, credentials) {
-  const {
-    id: _id,
-    createdAt: _createdAt,
-    updatedAt: _updatedAt,
-    priority: _priority,
-    ...metadata
-  } = connection;
-
-  return {
-    ...metadata,
-    provider: "codex",
-    authType: "oauth",
-    accessToken: credentials.accessToken,
-    refreshToken: credentials.refreshToken || connection.refreshToken,
-    idToken: credentials.idToken || connection.idToken || null,
-    expiresIn: credentials.expiresIn || null,
-    expiresAt: credentials.expiresAt || connection.expiresAt || null,
-    lastRefreshAt: credentials.lastRefreshAt || new Date().toISOString(),
-    testStatus: "active",
-    isActive: connection.isActive !== false,
-  };
+  return toCodexImportAccount(connection, credentials);
 }
 
 async function refreshBatch(connections) {

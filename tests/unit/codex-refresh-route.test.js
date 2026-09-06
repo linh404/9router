@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { parseCodexUploads } from "../../src/lib/oauth/codexImport.js";
 
 const getProviderConnections = vi.fn();
 const updateProviderCredentials = vi.fn();
@@ -78,6 +79,12 @@ describe("POST /api/oauth/codex/refresh", () => {
       accessToken: "access-new",
       refreshToken: "refresh-new",
     }));
+    const roundTrip = parseCodexUploads([{
+      name: "codex-refreshed.json",
+      text: JSON.stringify(body),
+    }]);
+    expect(roundTrip.errors).toEqual([]);
+    expect(roundTrip.accounts).toHaveLength(1);
     expect(updateProviderCredentials).not.toHaveBeenCalled();
   });
 

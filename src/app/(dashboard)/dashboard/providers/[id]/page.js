@@ -54,6 +54,7 @@ export default function ProviderDetailPage() {
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
   const [showCodexRefresh, setShowCodexRefresh] = useState(false);
   const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
+  const [codexExportLoading, setCodexExportLoading] = useState(false);
   const [selectedCodexRefreshFailures, setSelectedCodexRefreshFailures] = useState(null);
   const [showBulkImportGrokCli, setShowBulkImportGrokCli] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -397,6 +398,43 @@ export default function ProviderDetailPage() {
       notify.error(error?.message || "Codex token refresh failed");
     } finally {
       setCodexRefreshLoading(false);
+    }
+  };
+
+  const handleCodexExport = async () => {
+    setCodexExportLoading(true);
+    try {
+      const response = await fetch("/api/oauth/codex/export", { cache: "no-store" });
+      const raw = await response.text();
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : [];
+      } catch {
+        data = null;
+      }
+      if (!response.ok) {
+        notify.error(data?.error || "Codex connection export failed");
+        return;
+      }
+      if (!Array.isArray(data)) {
+        notify.error("Invalid Codex export response");
+        return;
+      }
+
+      const blob = new Blob([raw], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `codex-connections-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      notify.success(`Exported ${data.length} Codex connection(s)`);
+    } catch (error) {
+      notify.error(error?.message || "Codex connection export failed");
+    } finally {
+      setCodexExportLoading(false);
     }
   };
 
@@ -1546,6 +1584,18 @@ export default function ProviderDetailPage() {
                       disabled={codexRefreshLoading}
                     >
                       Refresh Codex tokens
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon="download"
+                      onClick={handleCodexExport}
+                      disabled={codexExportLoading}
+                      title="Download Codex connections as importable JSON"
+                    >
+                      {codexExportLoading ? "Exporting..." : "Export JSON"}
                     </Button>
                   )}
                   {selectedConnectionIds.length > 0 && (

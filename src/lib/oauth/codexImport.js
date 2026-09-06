@@ -161,11 +161,14 @@ function flattenCodexShape(data) {
         (a.platform === "openai" ||
           a.platform === "codex" ||
           a.type === "codex" ||
-          (a.credentials && (a.credentials.access_token || a.credentials.accessToken)))
+          (a.credentials && (a.credentials.access_token || a.credentials.accessToken)) ||
+          a.access_token ||
+          a.accessToken)
     );
     if (!acc) return { error: 'No openai/codex account found in "accounts[]"' };
     return {
       flat: {
+        ...acc,
         ...(acc.credentials || {}),
         ...(acc.extra || {}),
         email:
@@ -288,7 +291,9 @@ function parseCodexObject(data) {
   }
   if (!expiresAt) expiresAt = new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString();
 
-  const name = email
+  const name = typeof data.name === "string" && data.name.trim()
+    ? data.name.trim()
+    : email
     ? email
     : chatgptAccountId
     ? `Codex ${chatgptAccountId.slice(0, 8)}`
