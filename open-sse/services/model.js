@@ -1,4 +1,5 @@
 import REGISTRY from "../providers/registry/index.js";
+import { getProviderModels } from "../config/providerModels.js";
 
 // Alias→id derived from registry single-source: id→id, alias→id, aliases[]→id.
 // Media-only providers without a registry transport entry keep explicit aliases here.
@@ -17,7 +18,7 @@ for (const entry of REGISTRY) {
   for (const a of entry.aliases || []) ALIAS_TO_PROVIDER_ID[a] = entry.id;
 }
 
-const BUILTIN_MODEL_ALIASES = {
+export const BUILTIN_MODEL_ALIASES = {
   "grok-build": "gcli/grok-build",
 };
 
@@ -115,11 +116,41 @@ export async function getModelInfoCore(modelStr, aliasesOrGetter) {
     return resolved;
   }
 
+  // Bare model ID fallback: clients that bypass /v1/models (e.g. Codex
+  // multi-agent spawn_agent) send unprefixed IDs like "gpt-5.6-luna". Find
+  // the first provider in the static catalog that owns this model ID.
+  const bareOwner = findProviderForBareModel(parsed.model);
+  if (bareOwner) {
+    return {
+      provider: bareOwner,
+      model: parsed.model,
+    };
+  }
+
   // Fallback: infer provider from model name prefix
   return {
     provider: inferProviderFromModelName(parsed.model),
     model: parsed.model,
   };
+}
+
+/**
+ * Find the provider ID that statically owns a bare (unprefixed) model ID.
+ * Scans every provider's catalog; deterministic — registry order decides ties.
+ * PROVIDER_MODELS is keyed by alias ("cx"), so probe id, alias and aliases[].
+ */
+function findProviderForBareModel(modelId) {
+  if (!modelId || typeof modelId !== "string") return null;
+  for (const entry of REGISTRY) {
+    const keys = [entry.id, entry.alias, ...(entry.aliases || [])].filter(Boolean);
+    for (const key of keys) {
+      const catalog = getProviderModels(key);
+      if (catalog.some((m) => m?.id === modelId)) {
+        return entry.id;
+      }
+    }
+  }
+  return null;
 }
 
 // Config-driven prefix → provider inference (first match wins, fallback "openai").

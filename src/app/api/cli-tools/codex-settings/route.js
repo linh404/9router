@@ -7,6 +7,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
+import { toSpawnAgentModelId } from "@/shared/utils/spawnAgentModel";
 
 const execAsync = promisify(exec);
 
@@ -170,9 +171,11 @@ export async function POST(request) {
       http_headers: { Authorization: `Bearer ${apiKey}` },
     });
 
-    // Subagent model is a scalar under [agents]; agents.<role> now means a custom role
+    // Subagent model is a scalar under [agents]; agents.<role> now means a custom role.
+    // spawn_agent validates against bare model IDs, so store the unprefixed form.
+    const spawnAgentModel = toSpawnAgentModelId(subagentModel || model);
     deleteNestedSection(parsed, "agents.subagent");
-    setNestedSection(parsed, "agents.default_subagent_model", subagentModel || model);
+    setNestedSection(parsed, "agents.default_subagent_model", spawnAgentModel);
 
     // Write merged config
     const configContent = stringifyTOML(parsed);

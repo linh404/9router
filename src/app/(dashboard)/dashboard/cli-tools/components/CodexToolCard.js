@@ -7,6 +7,7 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { rememberEndpoint } from "./cliEndpointPresets";
+import { toSpawnAgentModelId } from "@/shared/utils/spawnAgentModel";
 
 const CODEX_REASONING_EFFORTS = ["auto", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const CODEX_SERVICE_TIERS = ["auto", "priority"];
@@ -185,6 +186,9 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
 
     const effectiveSubagentModel = subagentModel || selectedModel;
+    // spawn_agent validates against bare model IDs — strip the provider alias
+    // prefix ("cx/gpt-5.6-luna" → "gpt-5.6-luna") for the manual config preview.
+    const bareSubagentModel = toSpawnAgentModelId(effectiveSubagentModel);
     const reasoningConfig = reasoningEffort !== "auto"
       ? `model_reasoning_effort = "${reasoningEffort}"\n`
       : "";
@@ -205,7 +209,7 @@ wire_api = "responses"
 Authorization = "Bearer ${keyToUse}"
 
 [agents]
-default_subagent_model = "${effectiveSubagentModel}"
+default_subagent_model = "${bareSubagentModel}"
 `;
 
     return [
