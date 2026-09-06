@@ -11,6 +11,7 @@ import { toSpawnAgentModelId } from "@/shared/utils/spawnAgentModel";
 
 const CODEX_REASONING_EFFORTS = ["auto", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const CODEX_SERVICE_TIERS = ["auto", "priority"];
+const CODEX_SUBAGENT_REASONING_EFFORTS = ["inherit", ...CODEX_REASONING_EFFORTS];
 
 export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [codexStatus, setCodexStatus] = useState(initialStatus || null);
@@ -23,6 +24,7 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const [selectedModel, setSelectedModel] = useState("");
   const [subagentModel, setSubagentModel] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState("auto");
+  const [subagentReasoningEffort, setSubagentReasoningEffort] = useState("inherit");
   const [serviceTier, setServiceTier] = useState("auto");
   const [modalOpen, setModalOpen] = useState(false);
   const [subagentModalOpen, setSubagentModalOpen] = useState(false);
@@ -71,6 +73,9 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
 
       const reasoningEffortMatch = codexStatus.config.match(/^model_reasoning_effort\s*=\s*"([^"]+)"/m);
       setReasoningEffort(reasoningEffortMatch ? reasoningEffortMatch[1] : "auto");
+
+      const subagentReasoningEffortMatch = codexStatus.config.match(/^default_subagent_reasoning_effort\s*=\s*"([^"]+)"/m);
+      setSubagentReasoningEffort(subagentReasoningEffortMatch ? subagentReasoningEffortMatch[1] : "inherit");
 
       const serviceTierMatch = codexStatus.config.match(/^service_tier\s*=\s*"([^"]+)"/m);
       setServiceTier(serviceTierMatch ? serviceTierMatch[1] : "auto");
@@ -131,6 +136,7 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
           model: selectedModel,
           subagentModel: subagentModel || selectedModel,
           reasoningEffort,
+          subagentReasoningEffort,
           serviceTier,
         }),
       });
@@ -195,8 +201,11 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
     const serviceTierConfig = serviceTier !== "auto"
       ? `service_tier = "${serviceTier}"\n`
       : "";
-    const subagentReasoningConfig = reasoningEffort !== "auto"
-      ? `default_subagent_reasoning_effort = "${reasoningEffort}"\n`
+    const effectiveSubagentReasoning = subagentReasoningEffort === "inherit"
+      ? reasoningEffort
+      : subagentReasoningEffort;
+    const subagentReasoningConfig = effectiveSubagentReasoning !== "auto"
+      ? `default_subagent_reasoning_effort = "${effectiveSubagentReasoning}"\n`
       : "";
 
     const configContent = `# 9Router Configuration for Codex CLI
@@ -361,19 +370,21 @@ ${subagentReasoningConfig}default_subagent_model = "${bareSubagentModel}"
                   </select>
                 </div>
 
-                {/* Codex service tier controls request routing speed */}
+                {/* Codex service tier controls request routing speed for all turns */}
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Speed Tier</span>
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <select
-                    value={serviceTier}
-                    onChange={(e) => setServiceTier(e.target.value)}
-                    title="Codex service tier"
-                    className="w-full rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
-                  >
-                    <option value="auto">Speed: Auto</option>
-                    <option value="priority">Speed: Priority</option>
-                  </select>
+                  <div className="w-full min-w-0">
+                    <select
+                      value={serviceTier}
+                      onChange={(e) => setServiceTier(e.target.value)}
+                      title="Codex service tier for the main agent and subagents"
+                      className="w-full rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
+                    >
+                      <option value="auto">Speed: Auto (main + subagents)</option>
+                      <option value="priority">Speed: Priority (main + subagents)</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Subagent Model */}
@@ -405,6 +416,24 @@ ${subagentReasoningConfig}default_subagent_model = "${bareSubagentModel}"
                   >
                     Select Model
                   </button>
+                </div>
+
+                {/* Codex supports a separate default reasoning effort for spawned agents. */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Subagent Reasoning</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                  <select
+                    value={subagentReasoningEffort}
+                    onChange={(e) => setSubagentReasoningEffort(e.target.value)}
+                    title="Codex subagent reasoning effort"
+                    className="w-full rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
+                  >
+                    {CODEX_SUBAGENT_REASONING_EFFORTS.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort === "inherit" ? "Thinking: Same as main" : `Thinking: ${effort.charAt(0).toUpperCase() + effort.slice(1)}`}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

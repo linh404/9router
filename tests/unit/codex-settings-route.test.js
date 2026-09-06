@@ -85,4 +85,32 @@ describe("Codex settings route", () => {
     expect(config.agents?.default_subagent_model).toBeUndefined();
     expect(config.agents?.default_subagent_reasoning_effort).toBeUndefined();
   });
+
+  it("writes an explicit subagent reasoning override", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "9router-codex-subagent-"));
+    tempHomes.push(tempHome);
+    vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    const codexDir = path.join(tempHome, ".codex");
+    fs.mkdirSync(codexDir);
+
+    const { POST } = await import("../../src/app/api/cli-tools/codex-settings/route.js");
+    const response = await POST(new Request("http://localhost/api/cli-tools/codex-settings", {
+      method: "POST",
+      body: JSON.stringify({
+        baseUrl: "http://127.0.0.1:20128/v1",
+        apiKey: "test-key",
+        model: "cx/gpt-5.6-luna",
+        subagentModel: "cx/gpt-5.6-luna",
+        reasoningEffort: "low",
+        subagentReasoningEffort: "high",
+        serviceTier: "priority",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    const config = parseTOML(fs.readFileSync(path.join(codexDir, "config.toml"), "utf8"));
+    expect(config.model_reasoning_effort).toBe("low");
+    expect(config.agents.default_subagent_reasoning_effort).toBe("high");
+  });
 });

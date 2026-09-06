@@ -112,7 +112,7 @@ export async function GET() {
 // POST - Update 9Router settings (merge with existing config)
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, subagentModel, reasoningEffort, serviceTier } = await request.json();
+    const { baseUrl, apiKey, model, subagentModel, reasoningEffort, subagentReasoningEffort, serviceTier } = await request.json();
     
     if (!baseUrl || !apiKey || !model) {
       return NextResponse.json({ error: "baseUrl, apiKey and model are required" }, { status: 400 });
@@ -143,8 +143,20 @@ export async function POST(request) {
         return NextResponse.json({ error: "Invalid Codex reasoning effort" }, { status: 400 });
       } else {
         parsed.model_reasoning_effort = reasoningEffort;
-        // Keep spawned agents aligned with the main Codex turn by default.
-        setNestedSection(parsed, "agents.default_subagent_reasoning_effort", reasoningEffort);
+      }
+    }
+
+    // "inherit" keeps spawned agents aligned with the main Codex turn.
+    const effectiveSubagentReasoning = subagentReasoningEffort === undefined || subagentReasoningEffort === "inherit"
+      ? reasoningEffort
+      : subagentReasoningEffort;
+    if (effectiveSubagentReasoning !== undefined) {
+      if (effectiveSubagentReasoning === "auto" || effectiveSubagentReasoning === null || effectiveSubagentReasoning === "") {
+        deleteNestedSection(parsed, "agents.default_subagent_reasoning_effort");
+      } else if (!CODEX_REASONING_EFFORTS.has(effectiveSubagentReasoning)) {
+        return NextResponse.json({ error: "Invalid Codex subagent reasoning effort" }, { status: 400 });
+      } else {
+        setNestedSection(parsed, "agents.default_subagent_reasoning_effort", effectiveSubagentReasoning);
       }
     }
 
