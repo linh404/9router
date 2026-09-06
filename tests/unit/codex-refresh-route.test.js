@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getProviderConnections = vi.fn();
 const updateProviderCredentials = vi.fn();
 const refreshProviderCredentials = vi.fn();
+const recordCodexRefreshFailure = vi.fn();
 
 vi.mock("@/models", () => ({ getProviderConnections }));
 vi.mock("@/sse/services/tokenRefresh", () => ({ updateProviderCredentials }));
 vi.mock("open-sse/services/oauthCredentialManager.js", () => ({ refreshProviderCredentials }));
+vi.mock("@/sse/services/codexRefreshLog", () => ({ recordCodexRefreshFailure }));
 
 const { POST } = await import("../../src/app/api/oauth/codex/refresh/route.js");
 
@@ -37,6 +39,7 @@ describe("POST /api/oauth/codex/refresh", () => {
       lastRefreshAt: "2026-09-06T00:00:00.000Z",
     });
     updateProviderCredentials.mockResolvedValue(true);
+    recordCodexRefreshFailure.mockResolvedValue(null);
   });
 
   it("refreshes OAuth connections and persists only in DB mode", async () => {
@@ -57,6 +60,7 @@ describe("POST /api/oauth/codex/refresh", () => {
       expect.objectContaining({ id: "conn-1", status: "success" }),
       expect.objectContaining({ id: "conn-2", status: "skipped" }),
     ]));
+    expect(recordCodexRefreshFailure).not.toHaveBeenCalled();
   });
 
   it("returns a JSON export without writing to DB", async () => {
@@ -75,5 +79,25 @@ describe("POST /api/oauth/codex/refresh", () => {
       refreshToken: "refresh-new",
     }));
     expect(updateProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("records failed manual refreshes without recording successes", async () => {
+    refreshProviderCredentials.mockResolvedValueOnce({
+      error: "unrecoverable_refresh_error",
+      code: "invalid_grant",
+    });
+
+    const response = await POST(new Request("http://localhost/api/oauth/codex/refresh", {
+      method: "POST",
+      body: JSON.stringify({ mode: "db" }),
+      headers: { "Content-Type": "application/json" },
+    }));
+    const body = await response.json();
+
+    expect(body.summary).toEqual({ total: 2, success: 0, failed: 1, skipped: 1 });
+    expect(recordCodexRefreshFailure).toHaveBeenCalledWith("conn-1", expect.objectContaining({
+      source: "manual",
+      code: "invalid_grant",
+    }));
   });
 });

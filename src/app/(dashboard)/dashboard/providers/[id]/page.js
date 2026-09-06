@@ -24,6 +24,7 @@ import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import CodexRefreshModal from "./CodexRefreshModal";
+import CodexRefreshFailuresModal from "./CodexRefreshFailuresModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
@@ -53,6 +54,7 @@ export default function ProviderDetailPage() {
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
   const [showCodexRefresh, setShowCodexRefresh] = useState(false);
   const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
+  const [selectedCodexRefreshFailures, setSelectedCodexRefreshFailures] = useState(null);
   const [showBulkImportGrokCli, setShowBulkImportGrokCli] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
@@ -383,9 +385,8 @@ export default function ProviderDetailPage() {
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-      } else {
-        await fetchConnections();
       }
+      await fetchConnections();
 
       const summary = data.summary || {};
       notify.success(
@@ -1066,6 +1067,7 @@ export default function ProviderDetailPage() {
                   on: conn.providerSpecificData?.autoRefreshDaily === true,
                   onToggle: (on) => handleAutoRefreshConnection(conn.id, on),
                   updating: autoRefreshUpdating.has(conn.id),
+                  onViewFailures: () => setSelectedCodexRefreshFailures(conn),
                 } : null}
                 onUpdateProxy={async (proxyPoolId) => {
                   try {
@@ -1913,6 +1915,14 @@ export default function ProviderDetailPage() {
             if (!codexRefreshLoading) setShowCodexRefresh(false);
           }}
           onRefresh={handleCodexRefresh}
+        />
+      )}
+
+      {providerId === "codex" && (
+        <CodexRefreshFailuresModal
+          isOpen={!!selectedCodexRefreshFailures}
+          connection={selectedCodexRefreshFailures}
+          onClose={() => setSelectedCodexRefreshFailures(null)}
         />
       )}
 

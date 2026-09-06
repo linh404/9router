@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/models";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { refreshProviderCredentials } from "open-sse/services/oauthCredentialManager.js";
+import { recordCodexRefreshFailure } from "@/sse/services/codexRefreshLog";
 
 export const dynamic = "force-dynamic";
 
@@ -63,9 +64,15 @@ async function refreshBatch(connections) {
     try {
       const refreshed = await refreshOne(connection);
       if (!refreshed?.accessToken) {
+        const error = safeError(refreshed);
+        await recordCodexRefreshFailure(connection.id, {
+          error,
+          code: refreshed?.code,
+          source: "manual",
+        });
         return {
           connection,
-          result: publicResult(connection, "failed", { error: safeError(refreshed) }),
+          result: publicResult(connection, "failed", { error }),
         };
       }
 
@@ -77,10 +84,16 @@ async function refreshBatch(connections) {
         }),
       };
     } catch (error) {
+      const message = String(error?.message || error).slice(0, 240);
+      await recordCodexRefreshFailure(connection.id, {
+        error: message,
+        code: error?.code,
+        source: "manual",
+      });
       return {
         connection,
         result: publicResult(connection, "failed", {
-          error: String(error?.message || error).slice(0, 240),
+          error: message,
         }),
       };
     }
@@ -123,9 +136,17 @@ export async function POST(request) {
         }
 
         const saved = await updateProviderCredentials(item.connection.id, item.credentials);
-        results.push(saved
-          ? item.result
-          : publicResult(item.connection, "failed", { error: "Failed to save refreshed credentials" }));
+        if (saved) {
+          results.push(item.result);
+        } else {
+          const result = publicResult(item.connection, "failed", { error: "Failed to save refreshed credentials" });
+          await recordCodexRefreshFailure(item.connection.id, {
+            error: result.error,
+            code: "save_failed",
+            source: "manual",
+          });
+          results.push(result);
+        }
       }
 
       results.push(...skipped.map((connection) => publicResult(connection, "skipped", {

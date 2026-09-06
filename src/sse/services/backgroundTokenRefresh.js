@@ -7,6 +7,7 @@ import {
   getCredentialExpiryMs,
   getCredentialLastRefreshMs,
 } from "open-sse/services/oauthCredentialManager.js";
+import { recordCodexRefreshFailure } from "./codexRefreshLog.js";
 
 /** Refresh when expiry is within 30 minutes (or the provider on-request lead, whichever larger). */
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
@@ -93,7 +94,17 @@ async function loadActiveConnections() {
 
 async function refreshOne(connection) {
   const { checkAndRefreshToken } = await import("./tokenRefresh.js");
-  return checkAndRefreshToken(connection.provider, connection, { force: true });
+  const beforeRefreshMs = getCredentialLastRefreshMs(connection);
+  const refreshed = await checkAndRefreshToken(connection.provider, connection, { force: true });
+
+  if (connection.provider === "codex") {
+    const afterRefreshMs = getCredentialLastRefreshMs(refreshed);
+    if (afterRefreshMs === null || (beforeRefreshMs !== null && afterRefreshMs <= beforeRefreshMs)) {
+      throw new Error("Codex refresh did not return new credentials");
+    }
+  }
+
+  return refreshed;
 }
 
 /**
@@ -134,6 +145,13 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
             provider: conn.provider,
           });
         } catch (err) {
+          if (conn?.provider === "codex") {
+            await recordCodexRefreshFailure(conn.id, {
+              error: err?.message ?? String(err),
+              code: err?.code,
+              source: "automatic",
+            });
+          }
           log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
             id: conn?.id,
             provider: conn?.provider,
