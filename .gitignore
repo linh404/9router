@@ -89,3 +89,5 @@ graphify-out/*
 
 # Kiro local workspace state
 .kiro/
+# 9router dev autostart runtime log
+autostart.log 
