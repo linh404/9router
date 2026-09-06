@@ -55,6 +55,8 @@ export default function ProviderDetailPage() {
   const [showCodexRefresh, setShowCodexRefresh] = useState(false);
   const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
   const [codexExportLoading, setCodexExportLoading] = useState(false);
+  const [codexLimitLoading, setCodexLimitLoading] = useState(false);
+  const [codexLimitResults, setCodexLimitResults] = useState({});
   const [selectedCodexRefreshFailures, setSelectedCodexRefreshFailures] = useState(null);
   const [showBulkImportGrokCli, setShowBulkImportGrokCli] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -436,6 +438,48 @@ export default function ProviderDetailPage() {
     } finally {
       setCodexExportLoading(false);
     }
+  };
+
+  const handleCodexCheckAllLimits = async () => {
+    const targets = connections.filter((connection) => connection.authType === "oauth");
+    if (targets.length === 0 || codexLimitLoading) return;
+
+    setCodexLimitLoading(true);
+    setCodexLimitResults(
+      Object.fromEntries(targets.map((connection) => [connection.id, { loading: true }])),
+    );
+
+    const checkedResults = [];
+    let nextIndex = 0;
+    const checkOne = async (connection) => {
+      try {
+        const response = await fetch(`/api/usage/${connection.id}?force=1`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || data.message || `HTTP ${response.status}`);
+        }
+        return { data };
+      } catch (error) {
+        return { error: error?.message || "Failed to check limit" };
+      }
+    };
+    const worker = async () => {
+      while (nextIndex < targets.length) {
+        const index = nextIndex++;
+        checkedResults[index] = await checkOne(targets[index]);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(4, targets.length) }, () => worker()),
+    );
+
+    const checked = targets.map((connection, index) => [connection.id, checkedResults[index]]);
+    setCodexLimitResults(Object.fromEntries(checked));
+    setCodexLimitLoading(false);
+    const failed = checked.filter(([, result]) => result.error).length;
+    notify[failed === targets.length ? "error" : "success"](
+      `Codex limit check complete: ${targets.length - failed} succeeded, ${failed} failed.`,
+    );
   };
 
   const handleUpdateNode = async (formData) => {
@@ -1131,6 +1175,7 @@ export default function ProviderDetailPage() {
                 }}
                 onDelete={() => handleDelete(conn.id)}
                 oneByOneStatus={oneByOneResults[conn.id] || null}
+                limitStatus={providerId === "codex" ? codexLimitResults[conn.id] : null}
               />
             </div>
           </div>
@@ -1596,6 +1641,18 @@ export default function ProviderDetailPage() {
                       title="Download Codex connections as importable JSON"
                     >
                       {codexExportLoading ? "Exporting..." : "Export JSON"}
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon="speed"
+                      onClick={handleCodexCheckAllLimits}
+                      disabled={codexLimitLoading}
+                      title="Check quota limits for every Codex connection"
+                    >
+                      {codexLimitLoading ? "Checking limits..." : "Check limit all"}
                     </Button>
                   )}
                   {selectedConnectionIds.length > 0 && (

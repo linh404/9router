@@ -6,7 +6,39 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null, autoRefresh = null }) {
+function formatLimitResetTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getLimitLabel(limitStatus) {
+  if (!limitStatus) return "";
+  if (limitStatus.loading) return "Checking...";
+  if (limitStatus.error) return `Limit check failed: ${limitStatus.error}`;
+  if (limitStatus.data?.message && !limitStatus.data?.quotas) {
+    return limitStatus.data.message;
+  }
+
+  const quotas = Object.entries(limitStatus.data?.quotas || {});
+  if (quotas.length === 0) return "Limit checked: no quota data";
+
+  return quotas.slice(0, 2).map(([name, quota]) => {
+    const remaining = Number.isFinite(quota?.remaining)
+      ? `${Math.round(quota.remaining)}% left`
+      : "checked";
+    const reset = formatLimitResetTime(quota?.resetAt);
+    return `${name.replaceAll("_", " ")}: ${remaining}${reset ? ` · ${reset}` : ""}`;
+  }).join(" | ");
+}
+
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null, autoRefresh = null, limitStatus = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -242,6 +274,14 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
               {tokenExpiryPrefix}: {tokenExpiryLabel}
             </p>
           )}
+          {limitStatus && (
+            <p
+              className={`mt-1 text-[11px] ${limitStatus.error ? "text-red-500" : "text-text-muted"}`}
+              title={getLimitLabel(limitStatus)}
+            >
+              Limit: {getLimitLabel(limitStatus)}
+            </p>
+          )}
         </div>
       </div>
       <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
@@ -379,5 +419,10 @@ ConnectionRow.propTypes = {
     onToggle: PropTypes.func,
     updating: PropTypes.bool,
     onViewFailures: PropTypes.func,
+  }),
+  limitStatus: PropTypes.shape({
+    loading: PropTypes.bool,
+    error: PropTypes.string,
+    data: PropTypes.object,
   }),
 };
