@@ -195,6 +195,9 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
     const serviceTierConfig = serviceTier !== "auto"
       ? `service_tier = "${serviceTier}"\n`
       : "";
+    const subagentReasoningConfig = reasoningEffort !== "auto"
+      ? `default_subagent_reasoning_effort = "${reasoningEffort}"\n`
+      : "";
 
     const configContent = `# 9Router Configuration for Codex CLI
 model = "${selectedModel}"
@@ -208,8 +211,9 @@ wire_api = "responses"
 [model_providers.9router.http_headers]
 Authorization = "Bearer ${keyToUse}"
 
+# Spawned agents inherit the global service_tier setting above.
 [agents]
-default_subagent_model = "${bareSubagentModel}"
+${subagentReasoningConfig}default_subagent_model = "${bareSubagentModel}"
 `;
 
     return [

@@ -138,10 +138,13 @@ export async function POST(request) {
     if (reasoningEffort !== undefined) {
       if (reasoningEffort === "auto" || reasoningEffort === null || reasoningEffort === "") {
         delete parsed.model_reasoning_effort;
+        deleteNestedSection(parsed, "agents.default_subagent_reasoning_effort");
       } else if (!CODEX_REASONING_EFFORTS.has(reasoningEffort)) {
         return NextResponse.json({ error: "Invalid Codex reasoning effort" }, { status: 400 });
       } else {
         parsed.model_reasoning_effort = reasoningEffort;
+        // Keep spawned agents aligned with the main Codex turn by default.
+        setNestedSection(parsed, "agents.default_subagent_reasoning_effort", reasoningEffort);
       }
     }
 
@@ -223,6 +226,7 @@ export async function DELETE() {
 
     // Remove subagent configuration (both the current key and the legacy role form)
     deleteNestedSection(parsed, "agents.default_subagent_model");
+    deleteNestedSection(parsed, "agents.default_subagent_reasoning_effort");
     deleteNestedSection(parsed, "agents.subagent");
 
     // Write updated config
