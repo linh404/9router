@@ -15,7 +15,8 @@
     "start:bun": "bun ./.next/standalone/custom-server.js",
     "cli:sync": "node scripts/sync-cli-provider-models.mjs",
     "cli:pack": "npm --prefix cli run pack:cli",
-    "cli:publish": "npm --prefix cli run publish:cli"
+    "cli:publish": "npm --prefix cli run publish:cli",
+    "fix:xyflow": "node scripts/fix-xyflow-system.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
