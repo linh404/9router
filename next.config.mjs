@@ -21,6 +21,7 @@ const nextConfig = {
   // import — including xAI/Grok token refresh, which loads the OAuth service that imports
   // it. Keeping it external preserves the real `import.meta.url` at runtime.
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "open"],
+  allowedDevOrigins: ['127.0.0.1'],
   turbopack: {
     root: tracingRoot
   },
