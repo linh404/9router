@@ -5,27 +5,23 @@ import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 import { translate } from "@/i18n/runtime";
 
-const PLACEHOLDER = `[
-  {
-    "accessToken": "eyJhbGc...",
-    "refreshToken": "rt_...",
-    "idToken": "eyJhbGc...",
-    "email": "user@example.com"
-  }
-]`;
+const PLACEHOLDER = `{
+    "2fa": null,
+    "OPENAI_API_KEY": null,
+    "email": "user@example.com",
+    "last_refresh": "2026-09-01T00:00:00Z",
+    "password": null,
+    "tokens": {
+      "access_token": "eyJhbGc...",
+      "account_id": "00000000-0000-0000-0000-000000000000",
+      "id_token": "eyJhbGc...",
+      "refresh_token": "rt_..."
+    }
+}`;
 
 // Same caps as the standalone importer GUI (32 MiB JSON body, ~24 MiB ZIP).
 const MAX_ZIP_BYTES = 24 * 1024 * 1024;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
-
-function normalizeToArray(parsed) {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed && typeof parsed === "object") {
-    if (Array.isArray(parsed.accounts)) return parsed.accounts;
-    return [parsed];
-  }
-  return null;
-}
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -180,19 +176,29 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
     setResult(null);
     const trimmed = jsonText.trim();
     if (!trimmed) return;
-    let parsed;
+    setBusy("parsing");
     try {
-      parsed = JSON.parse(trimmed);
+      // Use the same server parser as file uploads.  Besides ordinary JSON
+      // arrays/objects this accepts native Codex JSONL and pretty-printed
+      // adjacent objects (the exact export format used by Codex tooling).
+      const parseRes = await fetch("/api/oauth/codex/parse-files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: [{ name: "pasted-codex.json", text: trimmed }] }),
+      });
+      const parsed = await parseRes.json();
+      if (!parseRes.ok) throw new Error(parsed?.error || `Request failed: ${parseRes.status}`);
+      const accounts = parsed?.accounts || [];
+      if (accounts.length === 0) {
+        const detail = parsed?.errors?.map((entry) => entry.error).filter(Boolean).join("; ");
+        throw new Error(detail || translate("No accounts found in input"));
+      }
+      await handleImportAccounts(accounts);
     } catch (err) {
-      setError(`${translate("Invalid JSON")}: ${err.message}`);
-      return;
+      setError(err.message || translate("Request failed"));
+    } finally {
+      setBusy("");
     }
-    const accounts = normalizeToArray(parsed);
-    if (!accounts || accounts.length === 0) {
-      setError(translate("No accounts found in input"));
-      return;
-    }
-    await handleImportAccounts(accounts);
   };
 
   const failedItems = result?.results?.filter((r) => !r.ok) || [];

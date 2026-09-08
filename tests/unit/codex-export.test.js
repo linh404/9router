@@ -33,32 +33,25 @@ describe("GET /api/oauth/codex/export", () => {
     ]);
   });
 
-  it("returns a portable flat JSON array without internal settings", async () => {
+  it("returns native Codex records without internal settings", async () => {
     const response = await GET();
-    const accounts = await response.json();
+    const raw = await response.text();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-disposition")).toContain("codex-connections-");
-    expect(accounts).toEqual([
-      expect.objectContaining({
-        accessToken: "access-1",
-        refreshToken: "refresh-1",
-        idToken: "id-1",
-        email: "one@example.com",
-        name: "Work account",
-        expiresAt: "2026-09-16T00:00:00.000Z",
-        account_id: "acct-1",
-        chatgpt_plan_type: "plus",
-      }),
-    ]);
-    expect(accounts[0]).not.toHaveProperty("providerSpecificData");
-    expect(accounts[0]).not.toHaveProperty("autoRefreshDaily");
+    expect(raw.trimStart().startsWith("{")).toBe(true);
+    expect(raw.trimStart().startsWith("[")).toBe(false);
+    expect(raw).toContain('"OPENAI_API_KEY"');
+    expect(raw).toContain('"tokens"');
+    expect(raw).toContain('"access_token": "access-1"');
+    expect(raw).not.toContain("autoRefreshDaily");
+    expect(raw).not.toContain("connectionProxyUrl");
   });
 
   it("round-trips through the existing Codex file importer", async () => {
     const response = await GET();
-    const exported = await response.json();
-    const parsed = parseCodexUploads([{ name: "codex-connections.json", text: JSON.stringify(exported) }]);
+    const exported = await response.text();
+    const parsed = parseCodexUploads([{ name: "codex-connections.json", text: exported }]);
 
     expect(parsed.errors).toEqual([]);
     expect(parsed.accounts).toHaveLength(1);
@@ -67,8 +60,41 @@ describe("GET /api/oauth/codex/export", () => {
       refreshToken: "refresh-1",
       idToken: "id-1",
       email: "one@example.com",
-      name: "Work account",
-      expiresAt: "2026-09-16T00:00:00.000Z",
+      name: "one@example.com",
+      providerSpecificData: expect.objectContaining({
+        chatgptAccountId: "acct-1",
+      }),
+    }));
+  });
+
+  it("accepts native nested records and pretty adjacent JSON objects", () => {
+    const record = (suffix) => ({
+      "2fa": `two-factor-${suffix}`,
+      OPENAI_API_KEY: null,
+      email: `${suffix}@example.com`,
+      last_refresh: "2026-09-01T00:00:00Z",
+      password: `password-${suffix}`,
+      tokens: {
+        access_token: `access-${suffix}`,
+        account_id: `account-${suffix}`,
+        id_token: `id-${suffix}`,
+        refresh_token: `refresh-${suffix}`,
+      },
+    });
+    const text = [record("one"), record("two")]
+      .map((value) => JSON.stringify(value, null, 2))
+      .join("\n");
+
+    const parsed = parseCodexUploads([{ name: "native.json", text }]);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.accounts).toHaveLength(2);
+    expect(parsed.accounts[0]).toEqual(expect.objectContaining({
+      email: "one@example.com",
+      lastRefreshAt: "2026-09-01T00:00:00Z",
+      providerSpecificData: expect.objectContaining({
+        "2fa": "two-factor-one",
+        password: "password-one",
+      }),
     }));
   });
 });

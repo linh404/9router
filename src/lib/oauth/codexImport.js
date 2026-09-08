@@ -161,23 +161,31 @@ function flattenCodexShape(data) {
         (a.platform === "openai" ||
           a.platform === "codex" ||
           a.type === "codex" ||
+          (a.tokens && typeof a.tokens === "object" &&
+            (a.tokens.access_token || a.tokens.accessToken)) ||
           (a.credentials && (a.credentials.access_token || a.credentials.accessToken)) ||
           a.access_token ||
           a.accessToken)
     );
     if (!acc) return { error: 'No openai/codex account found in "accounts[]"' };
+    const nested = acc.tokens || acc.credentials || {};
     return {
       flat: {
         ...acc,
-        ...(acc.credentials || {}),
+        ...nested,
         ...(acc.extra || {}),
         email:
           (acc.extra && acc.extra.email) ||
           acc.name ||
-          (acc.credentials && acc.credentials.email),
+          nested.email,
         account_id:
-          (acc.credentials && acc.credentials.chatgpt_account_id) ||
-          (acc.credentials && acc.credentials.account_id),
+          nested.chatgpt_account_id ||
+          nested.account_id,
+        ...(Object.prototype.hasOwnProperty.call(acc, "2fa") ? { "2fa": acc["2fa"] } : {}),
+        ...(Object.prototype.hasOwnProperty.call(acc, "OPENAI_API_KEY")
+          ? { OPENAI_API_KEY: acc.OPENAI_API_KEY }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(acc, "password") ? { password: acc.password } : {}),
       },
     };
   }
@@ -187,10 +195,83 @@ function flattenCodexShape(data) {
         ...data.tokens,
         email: data.tokens.email || data.email,
         last_refresh: data.last_refresh || data.tokens.last_refresh,
+        // Keep the native Codex export fields around.  They are not needed
+        // to authenticate the account, but are part of the source file
+        // format and must survive an import → export round trip.
+        ...(Object.prototype.hasOwnProperty.call(data, "2fa") ? { "2fa": data["2fa"] } : {}),
+        ...(Object.prototype.hasOwnProperty.call(data, "OPENAI_API_KEY")
+          ? { OPENAI_API_KEY: data.OPENAI_API_KEY }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(data, "password") ? { password: data.password } : {}),
       },
     };
   }
   return { flat: data };
+}
+
+// Parse a stream of adjacent JSON objects/arrays.  The files produced by the
+// Codex tooling are JSONL when compact, while a pretty-printed export has
+// several lines per object.  Splitting on newlines therefore is not enough;
+// scan balanced JSON values while respecting quoted strings and escapes.
+function parseJsonValueStream(text) {
+  const values = [];
+  let offset = 0;
+
+  while (offset < text.length) {
+    while (offset < text.length && /\s/.test(text[offset])) offset += 1;
+    if (offset >= text.length) break;
+
+    const start = offset;
+    const first = text[start];
+    if (first !== "{" && first !== "[") {
+      throw new Error(`JSON stream must contain objects or arrays (offset ${start})`);
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "{" || ch === "[") depth += 1;
+      else if (ch === "}" || ch === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+        if (depth < 0) break;
+      }
+    }
+
+    if (end < 0 || inString || depth !== 0) {
+      throw new Error(`JSON stream contains an incomplete value (offset ${start})`);
+    }
+    values.push(JSON.parse(text.slice(start, end)));
+    offset = end;
+  }
+
+  return values;
+}
+
+function appendCodexDocuments(root, documents) {
+  if (Array.isArray(root)) {
+    documents.push(...root);
+  } else if (root && Array.isArray(root.accounts)) {
+    documents.push(...root.accounts.map((account) => ({ accounts: [account] })));
+  } else {
+    documents.push(root);
+  }
 }
 
 // A file may hold one object, an array, an accounts[] wrapper, or JSON Lines.
@@ -199,27 +280,19 @@ export function parseCodexDocuments(jsonText) {
   const cleanText = stripBom(typeof jsonText === "string" ? jsonText : "").trim();
   if (!cleanText) return [{ error: "Empty JSON file" }];
 
-  let root;
+  let roots;
   try {
-    root = JSON.parse(cleanText);
+    roots = [JSON.parse(cleanText)];
   } catch (wholeError) {
-    const lines = cleanText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) return [{ error: `Invalid JSON: ${wholeError.message}` }];
-    const values = [];
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        values.push(JSON.parse(lines[i]));
-      } catch (lineError) {
-        return [{ error: `JSONL line ${i + 1} invalid: ${lineError.message}` }];
-      }
+    try {
+      roots = parseJsonValueStream(cleanText);
+    } catch {
+      return [{ error: `Invalid JSON: ${wholeError.message}` }];
     }
-    root = values;
   }
 
-  let documents;
-  if (Array.isArray(root)) documents = root;
-  else if (root && Array.isArray(root.accounts)) documents = root.accounts.map((a) => ({ accounts: [a] }));
-  else documents = [root];
+  const documents = [];
+  for (const value of roots) appendCodexDocuments(value, documents);
 
   if (documents.length === 0) return [{ error: "No accounts in file" }];
   return documents.map((doc) => parseCodexObject(doc));
@@ -262,10 +335,25 @@ function parseCodexObject(data) {
     (typeof auth.chatgpt_account_id === "string" && auth.chatgpt_account_id) ||
     (typeof data.chatgpt_account_id === "string" && data.chatgpt_account_id) ||
     (typeof data.account_id === "string" && data.account_id) ||
+    (typeof data.providerSpecificData?.chatgptAccountId === "string" && data.providerSpecificData.chatgptAccountId) ||
     null;
 
   const chatgptPlanType =
-    (typeof auth.chatgpt_plan_type === "string" && auth.chatgpt_plan_type) || "free";
+    (typeof auth.chatgpt_plan_type === "string" && auth.chatgpt_plan_type) ||
+    (typeof data.chatgpt_plan_type === "string" && data.chatgpt_plan_type) ||
+    (typeof data.providerSpecificData?.chatgptPlanType === "string" && data.providerSpecificData.chatgptPlanType) ||
+    "free";
+
+  const incomingProviderSpecificData =
+    data.providerSpecificData && typeof data.providerSpecificData === "object"
+      ? { ...data.providerSpecificData }
+      : {};
+  const sourceFields = ["2fa", "OPENAI_API_KEY", "password"];
+  for (const field of sourceFields) {
+    if (Object.prototype.hasOwnProperty.call(data, field)) {
+      incomingProviderSpecificData[field] = data[field];
+    }
+  }
 
   // expiresAt: accept ISO strings and Unix epochs (s or ms); fall back to
   // last_refresh + 10d, then now + 10d.
@@ -307,11 +395,17 @@ function parseCodexObject(data) {
       refreshToken,
       ...(idToken ? { idToken } : {}),
       expiresAt,
+      ...(typeof data.last_refresh === "string" && data.last_refresh
+        ? { lastRefreshAt: data.last_refresh }
+        : typeof data.lastRefreshAt === "string" && data.lastRefreshAt
+          ? { lastRefreshAt: data.lastRefreshAt }
+          : {}),
       providerSpecificData: {
+        ...incomingProviderSpecificData,
         chatgptAccountId: chatgptAccountId || "",
         chatgptPlanType: chatgptPlanType || "free",
-        authMethod: "imported",
-        provider: "Imported",
+        authMethod: incomingProviderSpecificData.authMethod || "imported",
+        provider: incomingProviderSpecificData.provider || "Imported",
       },
     },
     // Safe-to-display summary — never includes tokens.
@@ -323,6 +417,17 @@ function parseCodexObject(data) {
       refreshTail: refreshToken.slice(-8),
     },
   };
+}
+
+/**
+ * Normalize one dashboard/API bulk-import item to the internal camelCase
+ * connection shape.  In addition to the legacy flat shape this accepts the
+ * native Codex records with a nested `tokens` object.
+ */
+export function normalizeCodexImportAccount(raw) {
+  const parsed = parseCodexObject(raw);
+  if (parsed.error) throw new Error(parsed.error);
+  return parsed.account;
 }
 
 /**

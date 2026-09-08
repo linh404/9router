@@ -59,6 +59,15 @@ function shouldMergeProviderSpecificData(existing, incoming, hasLegacyProxy, has
   return existing !== undefined || incoming !== undefined || hasLegacyProxy || hasProxyPoolField;
 }
 
+function sanitizeProviderSpecificData(data) {
+  if (!data || typeof data !== "object") return data;
+  const safe = { ...data };
+  delete safe["2fa"];
+  delete safe.OPENAI_API_KEY;
+  delete safe.password;
+  return safe;
+}
+
 // GET /api/providers/[id] - Get single connection
 export async function GET(request, { params }) {
   try {
@@ -71,6 +80,7 @@ export async function GET(request, { params }) {
 
     // Hide sensitive fields
     const result = { ...connection };
+    result.providerSpecificData = sanitizeProviderSpecificData(result.providerSpecificData);
     delete result.apiKey;
     delete result.accessToken;
     delete result.refreshToken;
@@ -165,6 +175,7 @@ export async function PUT(request, { params }) {
 
     // Hide sensitive fields
     const result = { ...updated };
+    result.providerSpecificData = sanitizeProviderSpecificData(result.providerSpecificData);
     delete result.apiKey;
     delete result.accessToken;
     delete result.refreshToken;

@@ -408,19 +408,28 @@ function flattenCodexShape(data) {
         (a.platform === 'openai' ||
           a.platform === 'codex' ||
           a.type === 'codex' ||
+          (a.tokens && typeof a.tokens === 'object' &&
+            (a.tokens.access_token || a.tokens.accessToken)) ||
           (a.credentials && (a.credentials.access_token || a.credentials.accessToken)))
     );
     if (!acc) return { error: 'Không tìm thấy account openai/codex trong "accounts[]"' };
+    const nested = acc.tokens || acc.credentials || {};
     const merged = {
-      ...(acc.credentials || {}),
+      ...acc,
+      ...nested,
       ...(acc.extra || {}),
       email:
         (acc.extra && acc.extra.email) ||
         acc.name ||
-        (acc.credentials && acc.credentials.email),
+        nested.email,
       account_id:
-        (acc.credentials && acc.credentials.chatgpt_account_id) ||
-        (acc.credentials && acc.credentials.account_id),
+        nested.chatgpt_account_id ||
+        nested.account_id,
+      ...(Object.prototype.hasOwnProperty.call(acc, '2fa') ? { '2fa': acc['2fa'] } : {}),
+      ...(Object.prototype.hasOwnProperty.call(acc, 'OPENAI_API_KEY')
+        ? { OPENAI_API_KEY: acc.OPENAI_API_KEY }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(acc, 'password') ? { password: acc.password } : {}),
     };
     return { flat: merged };
   }
@@ -430,10 +439,72 @@ function flattenCodexShape(data) {
         ...data.tokens,
         email: data.tokens.email || data.email,
         last_refresh: data.last_refresh || data.tokens.last_refresh,
+        ...(Object.prototype.hasOwnProperty.call(data, '2fa') ? { '2fa': data['2fa'] } : {}),
+        ...(Object.prototype.hasOwnProperty.call(data, 'OPENAI_API_KEY')
+          ? { OPENAI_API_KEY: data.OPENAI_API_KEY }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(data, 'password') ? { password: data.password } : {}),
       },
     };
   }
   return { flat: data };
+}
+
+// Accept compact JSONL as well as adjacent pretty-printed JSON objects.  The
+// Codex desktop export uses the latter, so newline-based parsing alone would
+// incorrectly treat each property line as a separate JSON value.
+function parseJsonValueStream(text) {
+  const values = [];
+  let offset = 0;
+  while (offset < text.length) {
+    while (offset < text.length && /\s/.test(text[offset])) offset += 1;
+    if (offset >= text.length) break;
+    const start = offset;
+    const first = text[start];
+    if (first !== '{' && first !== '[') {
+      throw new Error(`JSON stream must contain objects or arrays (offset ${start})`);
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{' || ch === '[') depth += 1;
+      else if (ch === '}' || ch === ']') {
+        depth -= 1;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+        if (depth < 0) break;
+      }
+    }
+    if (end < 0 || inString || depth !== 0) {
+      throw new Error(`JSON stream contains an incomplete value (offset ${start})`);
+    }
+    values.push(JSON.parse(text.slice(start, end)));
+    offset = end;
+  }
+  return values;
+}
+
+function appendCodexDocuments(root, documents) {
+  if (Array.isArray(root)) documents.push(...root);
+  else if (root && Array.isArray(root.accounts)) {
+    documents.push(...root.accounts.map((account) => ({ accounts: [account] })));
+  } else documents.push(root);
 }
 
 // A shop export may contain one JSON object, a JSON array, an accounts[]
@@ -443,33 +514,19 @@ function parseCodexDocuments(jsonText) {
   const cleanText = stripBom(typeof jsonText === 'string' ? jsonText : '').trim();
   if (!cleanText) return [{ error: 'File JSON rỗng' }];
 
-  let root;
+  let roots;
   try {
-    root = JSON.parse(cleanText);
+    roots = [JSON.parse(cleanText)];
   } catch (wholeError) {
-    const lines = cleanText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (lines.length < 2) {
+    try {
+      roots = parseJsonValueStream(cleanText);
+    } catch {
       return [{ error: `JSON không hợp lệ: ${wholeError.message}` }];
     }
-    const values = [];
-    for (let index = 0; index < lines.length; index++) {
-      try {
-        values.push(JSON.parse(lines[index]));
-      } catch (lineError) {
-        return [{ error: `JSONL dòng ${index + 1} không hợp lệ: ${lineError.message}` }];
-      }
-    }
-    root = values;
   }
 
-  let documents;
-  if (Array.isArray(root)) {
-    documents = root;
-  } else if (root && Array.isArray(root.accounts)) {
-    documents = root.accounts.map((account) => ({ accounts: [account] }));
-  } else {
-    documents = [root];
-  }
+  const documents = [];
+  for (const root of roots) appendCodexDocuments(root, documents);
 
   if (documents.length === 0) return [{ error: 'Không có account trong file' }];
   return documents.map((document) => parseCodexObject(document));
@@ -529,6 +586,21 @@ function parseCodexObject(data) {
     (typeof auth.chatgpt_plan_type === 'string' && auth.chatgpt_plan_type) ||
     'free';
 
+  const providerSpecificData = {
+    ...(data.providerSpecificData && typeof data.providerSpecificData === 'object'
+      ? data.providerSpecificData
+      : {}),
+    ...Object.fromEntries(
+      ['2fa', 'OPENAI_API_KEY', 'password']
+        .filter((field) => Object.prototype.hasOwnProperty.call(data, field))
+        .map((field) => [field, data[field]])
+    ),
+    chatgptAccountId: chatgptAccountId || '',
+    chatgptPlanType: chatgptPlanType || 'free',
+    authMethod: data.providerSpecificData?.authMethod || 'imported',
+    provider: data.providerSpecificData?.provider || 'Imported',
+  };
+
   // expiresAt: prefer explicit "expired" or "expires_at" field. Both ISO
   // strings and Unix epochs (seconds or milliseconds) are accepted.
   let expiresAt = null;
@@ -581,13 +653,11 @@ function parseCodexObject(data) {
     accessToken,
     refreshToken,
     expiresAt,
+    ...(typeof data.last_refresh === 'string' && data.last_refresh
+      ? { lastRefreshAt: data.last_refresh }
+      : {}),
     testStatus: 'active',
-    providerSpecificData: {
-      chatgptAccountId: chatgptAccountId || '',
-      chatgptPlanType: chatgptPlanType || 'free',
-      authMethod: 'imported',
-      provider: 'Imported',
-    },
+    providerSpecificData,
   };
 
   return {

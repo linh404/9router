@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createProviderConnection } from "@/models";
 import { extractCodexAccountInfo } from "@/lib/oauth/providers";
+import { normalizeCodexImportAccount } from "@/lib/oauth/codexImport";
 
 /**
  * POST /api/oauth/codex/bulk-import
@@ -11,8 +12,10 @@ import { extractCodexAccountInfo } from "@/lib/oauth/providers";
  *   - Single:   {...}
  *   - Wrapped:  { accounts: [{...}, ...] }
  *
- * Each item must contain at least `accessToken`. Missing email / chatgpt
- * account info is best-effort backfilled from the JWT (idToken or accessToken).
+ * Each item must contain an access/refresh token pair, either in the legacy
+ * flat camelCase shape or in native Codex `tokens.{access_token,refresh_token}`
+ * form. Missing email / ChatGPT account info is best-effort backfilled from
+ * the JWT (idToken or accessToken).
  *
  * Tokens are NEVER echoed back in the response.
  */
@@ -66,8 +69,23 @@ export async function POST(request) {
         authType: _authType,
         createdAt: _createdAt,
         updatedAt: _updatedAt,
-        ...item
+        ...rawItem
       } = raw;
+
+      // Accept native Codex records directly (`tokens.{access_token,...}`),
+      // as well as legacy snake_case flat records.  The file-upload path
+      // already normalizes these through parse-files; doing it here too keeps
+      // the public bulk-import endpoint consistent for pasted/API payloads.
+      let item = rawItem;
+      if (
+        (rawItem.tokens &&
+          typeof rawItem.tokens === "object" &&
+          !Array.isArray(rawItem.tokens)) ||
+        rawItem.access_token ||
+        rawItem.refresh_token
+      ) {
+        item = normalizeCodexImportAccount(rawItem);
+      }
 
       if (!item.accessToken || typeof item.accessToken !== "string") {
         throw new Error("Missing accessToken");

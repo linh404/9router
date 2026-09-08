@@ -418,10 +418,6 @@ export default function ProviderDetailPage() {
         notify.error(data?.error || "Codex connection export failed");
         return;
       }
-      if (!Array.isArray(data)) {
-        notify.error("Invalid Codex export response");
-        return;
-      }
 
       const blob = new Blob([raw], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -432,7 +428,10 @@ export default function ProviderDetailPage() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      notify.success(`Exported ${data.length} Codex connection(s)`);
+      // Native Codex exports are newline-separated pretty JSON objects, not
+      // one JSON array, so the successful response is intentionally not
+      // validated with JSON.parse here.
+      notify.success("Codex connections exported");
     } catch (error) {
       notify.error(error?.message || "Codex connection export failed");
     } finally {

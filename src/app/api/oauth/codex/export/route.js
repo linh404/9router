@@ -7,8 +7,10 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * Export current Codex OAuth connections in the portable JSON shape accepted
- * by the dashboard importer and the standalone Codex importer.
+ * Export current Codex OAuth connections in the native Codex stream format.
+ * Each account is a pretty-printed JSON object; objects are separated by a
+ * newline and there is no surrounding array, matching the files produced by
+ * the Codex tooling.
  */
 export async function GET() {
   try {
@@ -17,7 +19,9 @@ export async function GET() {
       .filter(isExportableCodexConnection)
       .map((connection) => toCodexImportAccount(connection));
 
-    return new Response(JSON.stringify(accounts, null, 2), {
+    const payload = accounts.map((account) => JSON.stringify(account, null, 2)).join("\n");
+
+    return new Response(payload, {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",

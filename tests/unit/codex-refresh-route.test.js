@@ -76,8 +76,10 @@ describe("POST /api/oauth/codex/refresh", () => {
     expect(response.headers.get("content-disposition")).toContain("codex-refreshed-");
     expect(body.accounts).toHaveLength(1);
     expect(body.accounts[0]).toEqual(expect.objectContaining({
-      accessToken: "access-new",
-      refreshToken: "refresh-new",
+      tokens: expect.objectContaining({
+        access_token: "access-new",
+        refresh_token: "refresh-new",
+      }),
     }));
     const roundTrip = parseCodexUploads([{
       name: "codex-refreshed.json",

@@ -46,6 +46,18 @@ async function normalizeProxyPoolId(proxyPoolId) {
   return { proxyPoolId: normalizedId };
 }
 
+function sanitizeProviderSpecificData(data) {
+  if (!data || typeof data !== "object") return data;
+  const safe = { ...data };
+  // Native Codex files may carry account passwords and 2FA secrets. They are
+  // retained server-side solely for a faithful export, never returned by the
+  // provider-list API.
+  delete safe["2fa"];
+  delete safe.OPENAI_API_KEY;
+  delete safe.password;
+  return safe;
+}
+
 // GET /api/providers - List all connections
 export async function GET() {
   try {
@@ -69,6 +81,7 @@ export async function GET() {
       return {
         ...c,
         name,
+        providerSpecificData: sanitizeProviderSpecificData(c.providerSpecificData),
         apiKey: undefined,
         accessToken: undefined,
         refreshToken: undefined,
