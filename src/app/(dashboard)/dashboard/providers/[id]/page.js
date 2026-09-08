@@ -23,6 +23,7 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
+import CodexAutoLoginModal from "./CodexAutoLoginModal";
 import CodexRefreshModal from "./CodexRefreshModal";
 import CodexRefreshFailuresModal from "./CodexRefreshFailuresModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
@@ -52,6 +53,7 @@ export default function ProviderDetailPage() {
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
+  const [showCodexAutoLogin, setShowCodexAutoLogin] = useState(false);
   const [showCodexRefresh, setShowCodexRefresh] = useState(false);
   const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
   const [codexExportLoading, setCodexExportLoading] = useState(false);
@@ -1744,7 +1746,12 @@ export default function ProviderDetailPage() {
                     )}
                     {providerId === "codex" && (
                       <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportCodex(true)}>
-                        {translate("Bulk Add")}
+                        {translate("Import JSON")}
+                      </Button>
+                    )}
+                    {providerId === "codex" && (
+                      <Button size="sm" icon="rocket_launch" variant="secondary" onClick={() => setShowCodexAutoLogin(true)}>
+                        Auto Login
                       </Button>
                     )}
                     {providerId === "grok-cli" && (
@@ -1818,7 +1825,19 @@ export default function ProviderDetailPage() {
                       title={translate("Bulk import codex accounts from JSON")}
                       className="w-full sm:w-auto"
                     >
-                      {translate("Bulk Add")}
+                      {translate("Import JSON")}
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      icon="rocket_launch"
+                      variant="secondary"
+                      onClick={() => setShowCodexAutoLogin(true)}
+                      title="Sign in to multiple Codex accounts in parallel"
+                      className="w-full sm:w-auto"
+                    >
+                      Auto Login
                     </Button>
                   )}
                   {providerId === "grok-cli" && (
@@ -2010,6 +2029,18 @@ export default function ProviderDetailPage() {
           isOpen={showBulkImportCodex}
           onClose={() => setShowBulkImportCodex(false)}
           onSuccess={fetchConnections}
+        />
+      )}
+
+      {providerId === "codex" && (
+        <CodexAutoLoginModal
+          isOpen={showCodexAutoLogin}
+          onClose={() => setShowCodexAutoLogin(false)}
+          onSuccess={fetchConnections}
+          onOpenImport={() => {
+            setShowCodexAutoLogin(false);
+            setShowBulkImportCodex(true);
+          }}
         />
       )}
 

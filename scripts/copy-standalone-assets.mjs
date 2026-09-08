@@ -16,6 +16,13 @@ export function copyStandaloneAssets({ projectRoot = process.cwd(), distDir = pr
     return;
   }
 
+  const pythonSidecarSource = resolve(projectRoot, "python", "codex-auto-login");
+  const pythonSidecarDestination = resolve(standaloneDir, "python", "codex-auto-login");
+  if (existsSync(pythonSidecarSource)) {
+    cpSync(pythonSidecarSource, pythonSidecarDestination, { recursive: true, force: true });
+    console.log(`[standalone-assets] Copied Python Codex sidecar to ${pythonSidecarDestination}`);
+  }
+
   const staticSource = resolve(buildDir, "static");
   const staticDestination = resolve(standaloneDir, distDir, "static");
   if (existsSync(staticSource)) {

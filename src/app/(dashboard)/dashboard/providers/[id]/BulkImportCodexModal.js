@@ -62,6 +62,7 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
   const [busy, setBusy] = useState(""); // "" | "parsing" | "importing"
   const [error, setError] = useState("");
   const [preview, setPreview] = useState(null); // { accounts, preview, errors }
+  const [selectedAccountIndexes, setSelectedAccountIndexes] = useState([]);
   const [result, setResult] = useState(null);
   const dropRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -72,6 +73,7 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
     setJsonText("");
     setError("");
     setPreview(null);
+    setSelectedAccountIndexes([]);
     setResult(null);
     setBusy("");
   };
@@ -110,35 +112,46 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
       }
     }
     if (loaded.length) {
-      setFiles((prev) => [...prev, ...loaded]);
+      const nextFiles = [...files, ...loaded];
+      setFiles(nextFiles);
       setPreview(null);
+      setSelectedAccountIndexes([]);
+      setResult(null);
+      await parseFiles(nextFiles);
+    }
+  };
+
+  const removeFile = async (key) => {
+    const remainingFiles = files.filter((f) => f.key !== key);
+    setFiles(remainingFiles);
+    if (remainingFiles.length > 0) {
+      await parseFiles(remainingFiles);
+    } else {
+      setPreview(null);
+      setSelectedAccountIndexes([]);
       setResult(null);
     }
   };
 
-  const removeFile = (key) => {
-    setFiles((prev) => prev.filter((f) => f.key !== key));
-    setPreview(null);
-    setResult(null);
-  };
-
-  const handleParse = async () => {
+  const parseFiles = async (fileEntries) => {
     setError("");
     setPreview(null);
+    setSelectedAccountIndexes([]);
     setResult(null);
-    if (files.length === 0) return;
+    if (fileEntries.length === 0) return;
     setBusy("parsing");
     try {
       const res = await fetch("/api/oauth/codex/parse-files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          files: files.map(({ name, text, zip }) => ({ name, text, zip })),
+          files: fileEntries.map(({ name, text, zip }) => ({ name, text, zip })),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || `Request failed: ${res.status}`);
       setPreview(data);
+      setSelectedAccountIndexes((data.accounts || []).map((_, index) => index));
     } catch (err) {
       setError(err.message || translate("Request failed"));
     } finally {
@@ -167,9 +180,27 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
   };
 
   const handleImportFiles = () => {
-    if (!preview?.accounts?.length) return;
-    handleImportAccounts(preview.accounts);
+    const accounts = preview?.accounts || [];
+    const selected = selectedAccountIndexes
+      .filter((index) => Number.isInteger(index) && index >= 0 && index < accounts.length)
+      .map((index) => accounts[index]);
+    if (!selected.length) return;
+    handleImportAccounts(selected);
   };
+
+  const toggleAccount = (index) => {
+    setSelectedAccountIndexes((current) => (
+      current.includes(index)
+        ? current.filter((item) => item !== index)
+        : [...current, index].sort((a, b) => a - b)
+    ));
+  };
+
+  const selectAllAccounts = () => {
+    setSelectedAccountIndexes((preview?.accounts || []).map((_, index) => index));
+  };
+
+  const clearAccountSelection = () => setSelectedAccountIndexes([]);
 
   const handleImportPaste = async () => {
     setError("");
@@ -230,7 +261,7 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
           <>
             <p className="text-xs text-text-muted">
               {translate(
-                "Drop ChatGPT/Codex OAuth JSON files (one account each), a .zip bundle, or a whole folder. Tokens are parsed and previewed before anything is written."
+                "Drop ChatGPT/Codex OAuth JSON files (one account each), a .zip bundle, or a whole folder. Accounts will appear here for selection before import."
               )}
             </p>
 
@@ -341,16 +372,17 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
               </ul>
             )}
 
-            <div className="flex gap-2">
+            {busy === "parsing" && (
+              <p className="text-xs text-text-muted">{translate("Reading accounts...")}</p>
+            )}
+            <div className="flex justify-end">
               <Button
-                onClick={handleParse}
-                fullWidth
-                disabled={busy !== "" || files.length === 0}
-              >
-                {busy === "parsing" ? translate("Checking...") : translate("Check Tokens")}
-              </Button>
-              <Button
-                onClick={() => { setFiles([]); setPreview(null); setResult(null); }}
+                onClick={() => {
+                  setFiles([]);
+                  setPreview(null);
+                  setSelectedAccountIndexes([]);
+                  setResult(null);
+                }}
                 variant="ghost"
                 disabled={busy !== "" || files.length === 0}
               >
@@ -358,7 +390,7 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
               </Button>
             </div>
 
-            {/* Parse preview */}
+            {/* Parsed account selection */}
             {preview && (
               <div className="flex flex-col gap-2">
                 <div className="text-sm font-medium">
@@ -375,11 +407,44 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
                     </span>
                   )}
                 </div>
+                {preview.accounts.length > 0 && (
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-text-muted">
+                      {selectedAccountIndexes.length}/{preview.accounts.length} {translate("selected")}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="text-primary underline disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={selectAllAccounts}
+                        disabled={selectedAccountIndexes.length === preview.accounts.length}
+                      >
+                        {translate("Select all")}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-text-muted underline disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={clearAccountSelection}
+                        disabled={selectedAccountIndexes.length === 0}
+                      >
+                        {translate("Select none")}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {preview.preview?.length > 0 && (
                   <div className="max-h-48 overflow-y-auto rounded border border-accent/20">
                     <table className="w-full text-xs">
                       <thead className="bg-sidebar text-left text-text-muted">
                         <tr>
+                          <th className="w-8 p-1.5">
+                            <input
+                              type="checkbox"
+                              aria-label={translate("Select all accounts")}
+                              checked={preview.accounts.length > 0 && selectedAccountIndexes.length === preview.accounts.length}
+                              onChange={(event) => (event.target.checked ? selectAllAccounts() : clearAccountSelection())}
+                            />
+                          </th>
                           <th className="p-1.5">{translate("File")}</th>
                           <th className="p-1.5">Email</th>
                           <th className="p-1.5">{translate("Expires")}</th>
@@ -389,6 +454,14 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
                       <tbody>
                         {preview.preview.map((row, i) => (
                           <tr key={i} className="border-t border-accent/10">
+                            <td className="p-1.5">
+                              <input
+                                type="checkbox"
+                                aria-label={`${translate("Select account")} ${row.email || i + 1}`}
+                                checked={selectedAccountIndexes.includes(i)}
+                                onChange={() => toggleAccount(i)}
+                              />
+                            </td>
                             <td className="max-w-[14rem] truncate p-1.5 font-mono" title={row.name}>
                               {row.name}
                             </td>
@@ -465,9 +538,11 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
             <Button
               onClick={handleImportFiles}
               fullWidth
-              disabled={busy !== "" || !preview?.accounts?.length}
+              disabled={busy !== "" || selectedAccountIndexes.length === 0}
             >
-              {busy === "importing" ? translate("Importing...") : translate("Import All")}
+              {busy === "importing"
+                ? translate("Importing...")
+                : `${translate("Import Selected")} (${selectedAccountIndexes.length})`}
             </Button>
           ) : (
             <Button

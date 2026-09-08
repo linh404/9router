@@ -10,7 +10,9 @@ import { parseCodexUploads } from "@/lib/oauth/codexImport";
  * response, then sends `accounts` to bulk-import when the user confirms.
  *
  * Body: { files: [{ name, text?, zip? }] }  (zip = base64-encoded archive)
- * Response: { accounts, preview, errors } — tokens are never echoed back.
+ * Response: { accounts, preview, errors }. `preview` is safe to render and
+ * excludes token fields; `accounts` carries normalized token payloads so the
+ * dashboard can submit only the rows explicitly selected by the user.
  */
 const MAX_FILES = 200;
 
