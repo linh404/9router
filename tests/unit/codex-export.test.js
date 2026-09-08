@@ -2,13 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseCodexUploads } from "../../src/lib/oauth/codexImport.js";
 
 const getProviderConnections = vi.fn();
+const getUsageForProvider = vi.fn();
+const refreshAndUpdateCredentials = vi.fn();
 vi.mock("@/models", () => ({ getProviderConnections }));
+vi.mock("open-sse/services/usage.js", () => ({ getUsageForProvider }));
+vi.mock("@/lib/network/connectionProxy", () => ({
+  resolveConnectionProxyConfig: vi.fn(async () => ({})),
+}));
+vi.mock("@/lib/oauth/refreshCredentials", () => ({ refreshAndUpdateCredentials }));
 
 const { GET } = await import("../../src/app/api/oauth/codex/export/route.js");
 
 describe("GET /api/oauth/codex/export", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refreshAndUpdateCredentials.mockImplementation(async (connection) => ({ connection, refreshed: false }));
+    getUsageForProvider.mockResolvedValue({ quotas: { session: { resetAt: null } } });
     getProviderConnections.mockResolvedValue([
       {
         id: "conn-1",
@@ -96,5 +105,51 @@ describe("GET /api/oauth/codex/export", () => {
         password: "password-one",
       }),
     }));
+  });
+
+  it("refreshes usage for every exportable account and sorts by primary reset", async () => {
+    getProviderConnections.mockResolvedValue([
+      {
+        id: "later",
+        provider: "codex",
+        authType: "oauth",
+        email: "later@example.com",
+        accessToken: "access-later",
+        refreshToken: "refresh-later",
+        providerSpecificData: {},
+      },
+      {
+        id: "earlier",
+        provider: "codex",
+        authType: "oauth",
+        email: "earlier@example.com",
+        accessToken: "access-earlier",
+        refreshToken: "refresh-earlier",
+        providerSpecificData: {},
+      },
+      {
+        id: "missing",
+        provider: "codex",
+        authType: "oauth",
+        email: "missing@example.com",
+        accessToken: "access-missing",
+        refreshToken: "refresh-missing",
+        providerSpecificData: {},
+      },
+    ]);
+    getUsageForProvider.mockImplementation(async (connection, _proxy, options) => {
+      expect(options).toEqual({ force: true });
+      if (connection.id === "earlier") return { quotas: { session: { resetAt: "2026-09-10T00:00:00.000Z" } } };
+      if (connection.id === "later") return { quotas: { session: { resetAt: "2026-09-12T00:00:00.000Z" } } };
+      return { quotas: { session: { resetAt: null } } };
+    });
+
+    const response = await GET();
+    const raw = await response.text();
+    const emails = [...raw.matchAll(/"email": "([^"]+)"/g)].map((match) => match[1]);
+
+    expect(emails).toEqual(["earlier@example.com", "later@example.com", "missing@example.com"]);
+    expect(getUsageForProvider).toHaveBeenCalledTimes(3);
+    expect(refreshAndUpdateCredentials).toHaveBeenCalledTimes(3);
   });
 });

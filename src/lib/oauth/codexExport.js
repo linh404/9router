@@ -1,3 +1,17 @@
+// Ensure proxyFetch is loaded before usage checks run server-side.
+import "open-sse/index.js";
+import { getUsageForProvider } from "open-sse/services/usage.js";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { refreshAndUpdateCredentials } from "@/lib/oauth/refreshCredentials";
+
+const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
+
+function isAuthExpiredMessage(usage) {
+  if (!usage?.message) return false;
+  const message = usage.message.toLowerCase();
+  return AUTH_EXPIRED_PATTERNS.some((pattern) => message.includes(pattern));
+}
+
 /**
  * Convert a stored Codex OAuth connection to the native Codex account shape.
  *
@@ -55,4 +69,56 @@ export function isExportableCodexConnection(connection) {
     connection?.accessToken &&
     connection?.refreshToken
   );
+}
+
+/**
+ * Fetch the current Codex quota snapshot and return the primary session reset
+ * together with the possibly refreshed connection used for that check.
+ * Usage failures are handled by the export route so one unavailable account
+ * does not prevent the remaining accounts from being exported.
+ */
+export async function fetchCodexPrimaryResetAt(connection) {
+  const proxyConfig = await resolveConnectionProxyConfig(connection?.providerSpecificData || {});
+  const proxyOptions = {
+    connectionProxyEnabled: proxyConfig.connectionProxyEnabled === true,
+    connectionProxyUrl: proxyConfig.connectionProxyUrl || "",
+    connectionNoProxy: proxyConfig.connectionNoProxy || "",
+    vercelRelayUrl: proxyConfig.vercelRelayUrl || "",
+    strictProxy: false,
+  };
+  let refreshed = await refreshAndUpdateCredentials(connection, false, proxyOptions);
+  let usage = await getUsageForProvider(refreshed.connection, proxyOptions, { force: true });
+  if (isAuthExpiredMessage(usage) && refreshed.connection.refreshToken) {
+    try {
+      refreshed = await refreshAndUpdateCredentials(refreshed.connection, true, proxyOptions);
+      usage = await getUsageForProvider(refreshed.connection, proxyOptions, { force: true });
+    } catch (error) {
+      console.warn(`[Codex export] Force refresh failed: ${error.message}`);
+    }
+  }
+  const resetAt = usage?.quotas?.session?.resetAt
+    || usage?.quotas?.primary_session?.resetAt
+    || usage?.quotas?.primary?.resetAt
+    || null;
+  const timestamp = resetAt ? Date.parse(resetAt) : Number.NaN;
+  if (!Number.isFinite(timestamp)) return { connection: refreshed.connection, resetAt: null, timestamp: Number.NaN };
+  return { connection: refreshed.connection, resetAt, timestamp };
+}
+
+/** Sort by primary session reset time; accounts without a valid reset go last. */
+export function sortCodexExportRecords(records) {
+  return records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => {
+      const leftTime = left.record.reset?.timestamp;
+      const rightTime = right.record.reset?.timestamp;
+      const leftMissing = !Number.isFinite(leftTime);
+      const rightMissing = !Number.isFinite(rightTime);
+      if (leftMissing || rightMissing) {
+        if (leftMissing && rightMissing) return left.index - right.index;
+        return leftMissing ? 1 : -1;
+      }
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .map(({ record }) => record);
 }
