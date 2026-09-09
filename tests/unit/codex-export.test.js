@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseCodexUploads } from "../../src/lib/oauth/codexImport.js";
+import { hasCodexTokenPair, parseCodexAccountFile } from "../../src/shared/utils/codexAccountFile.js";
 
 const getProviderConnections = vi.fn();
 const getUsageForProvider = vi.fn();
@@ -42,14 +43,24 @@ describe("GET /api/oauth/codex/export", () => {
     ]);
   });
 
-  it("returns native Codex records without internal settings", async () => {
+  it("returns Import JSON account records without internal settings", async () => {
     const response = await GET();
     const raw = await response.text();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-disposition")).toContain("codex-connections-");
-    expect(raw.trimStart().startsWith("{")).toBe(true);
-    expect(raw.trimStart().startsWith("[")).toBe(false);
+    expect(raw.trimStart().startsWith("[")).toBe(true);
+    expect(JSON.parse(raw)).toEqual([
+      expect.objectContaining({
+        email: "one@example.com",
+        password: null,
+        "2fa": null,
+        tokens: expect.objectContaining({
+          access_token: "access-1",
+          refresh_token: "refresh-1",
+        }),
+      }),
+    ]);
     expect(raw).toContain('"OPENAI_API_KEY"');
     expect(raw).toContain('"tokens"');
     expect(raw).toContain('"access_token": "access-1"');
@@ -74,6 +85,20 @@ describe("GET /api/oauth/codex/export", () => {
         chatgptAccountId: "acct-1",
       }),
     }));
+  });
+
+  it("round-trips the exported Import JSON shape through Auto Login parsing", async () => {
+    const response = await GET();
+    const exported = await response.text();
+    const parsed = parseCodexAccountFile(exported);
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.records).toHaveLength(1);
+    expect(parsed.records[0]).toEqual(expect.objectContaining({
+      email: "one@example.com",
+      password: "",
+    }));
+    expect(hasCodexTokenPair(parsed.records[0])).toBe(true);
   });
 
   it("accepts native nested records and pretty adjacent JSON objects", () => {

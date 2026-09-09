@@ -42,10 +42,10 @@ async function rankConnectionsByReset(exportable) {
 }
 
 /**
- * Export current Codex OAuth connections in the native Codex stream format.
- * Each account is a pretty-printed JSON object; objects are separated by a
- * newline and there is no surrounding array, matching the files produced by
- * the Codex tooling.
+ * Export current Codex OAuth connections in the same account-record shape used
+ * by the dashboard's Import JSON flow.  The top-level array keeps the file a
+ * single valid JSON document while every item remains compatible with native
+ * Codex records (`email`, `password`, `2fa`, and `tokens.*`).
  */
 export async function GET() {
   try {
@@ -55,7 +55,7 @@ export async function GET() {
     const accounts = sortCodexExportRecords(ranked)
       .map(({ connection }) => toCodexImportAccount(connection));
 
-    const payload = accounts.map((account) => JSON.stringify(account, null, 2)).join("\n");
+    const payload = JSON.stringify(accounts, null, 2);
 
     return new Response(payload, {
       status: 200,

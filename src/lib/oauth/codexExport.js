@@ -15,8 +15,9 @@ function isAuthExpiredMessage(usage) {
 /**
  * Convert a stored Codex OAuth connection to the native Codex account shape.
  *
- * The source files used by Codex are streams of records with this exact
- * structure (the export route pretty-prints one record at a time):
+ * The dashboard Import JSON flow uses records with this exact structure.  The
+ * export route writes these records as one JSON array so the same file can be
+ * selected by Import JSON or Auto Login:
  *
  *   { "2fa", "OPENAI_API_KEY", "email", "last_refresh", "password",
  *     "tokens": { "access_token", "account_id", "id_token", "refresh_token" } }

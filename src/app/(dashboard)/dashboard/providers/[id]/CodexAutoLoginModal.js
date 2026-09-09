@@ -3,60 +3,24 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
+import {
+  hasCodexTokenPair,
+  parseCodexAccountFile,
+} from "@/shared/utils/codexAccountFile";
 
 const POLL_INTERVAL_MS = 750;
 
-function normalizeCredentialRecord(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const source = value.credentials && typeof value.credentials === "object"
-    ? { ...value, ...value.credentials }
-    : value;
-  const email = String(source.email || source.username || source.login || "").trim();
-  const password = String(source.password || "").trim();
-  const totpSecret = String(
-    source.totpSecret
-      || source.totp
-      || source.twoFactorSecret
-      || source.two_factor
-      || source.two_factor_secret
-      || source.otp
-      || source.totp_secret
-      || source["2fa"]
-      || source["2fa_secret"]
-      || ""
-  ).trim();
-  if (!email || !password) return null;
-  return { email, password, totpSecret };
-}
-
 function parseCredentialFile(text) {
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (!lines.length) throw new Error("The selected file is empty.");
-    const records = [];
-    for (const [index, line] of lines.entries()) {
-      try {
-        records.push(JSON.parse(line));
-      } catch {
-        throw new Error(`Invalid JSON on line ${index + 1}.`);
-      }
-    }
-    parsed = records;
+  const parsed = parseCodexAccountFile(text);
+  if (!parsed.records.length) {
+    const detail = parsed.errors.map((item) => item.error).filter(Boolean).join("; ");
+    throw new Error(detail || "No valid Codex accounts found.");
   }
-
-  const values = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.accounts)
-      ? parsed.accounts
-      : [parsed];
-  const accounts = values.map(normalizeCredentialRecord).filter(Boolean);
-  if (!accounts.length) {
-    throw new Error("No valid accounts found. Each record needs email and password.");
-  }
-  return { accounts, skipped: values.length - accounts.length };
+  return {
+    accounts: parsed.records,
+    skipped: parsed.errors.length,
+    errors: parsed.errors,
+  };
 }
 
 function normalizeStatus(payload) {
@@ -172,7 +136,8 @@ export default function CodexAutoLoginModal({ isOpen, onClose, onSuccess }) {
       setSelectedAccountIndexes(parsed.accounts.map((_, index) => index));
       setFileName(file.name);
       if (parsed.skipped > 0) {
-        setError(`${parsed.skipped} record(s) skipped because email or password was missing.`);
+        const details = parsed.errors?.map((item) => item.error).filter(Boolean).join("; ");
+        setError(`${parsed.skipped} record(s) skipped${details ? `: ${details}` : "."}`);
       }
       setStatus(null);
       setJobId("");
@@ -198,9 +163,66 @@ export default function CodexAutoLoginModal({ isOpen, onClose, onSuccess }) {
 
   const clearAccountSelection = () => setSelectedAccountIndexes([]);
 
+  const importTokenAccounts = async (selectedAccounts) => {
+    setBusy(true);
+    setStopping(false);
+    setStatus({
+      total: selectedAccounts.length,
+      done: 0,
+      failed: 0,
+      running: true,
+      results: [],
+    });
+    try {
+      const response = await fetch("/api/oauth/codex/bulk-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accounts: selectedAccounts.map((account) => account.raw) }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Token import failed (${response.status})`);
+
+      const results = selectedAccounts.map((account, index) => {
+        const item = Array.isArray(payload.results)
+          ? payload.results.find((candidate) => candidate.index === index) || payload.results[index]
+          : null;
+        return {
+          email: account.email,
+          status: item?.ok ? "success" : "failed",
+          ...(item?.error ? { error: item.error } : {}),
+        };
+      });
+      const succeeded = results.filter((result) => result.status === "success").length;
+      const failed = results.length - succeeded;
+      setStatus({
+        total: results.length,
+        done: succeeded,
+        succeeded,
+        failed,
+        cancelled: 0,
+        running: false,
+        completed: true,
+        stopped: false,
+        workersRunning: 0,
+        workersRequested: 0,
+        activeAccounts: [],
+        results,
+        accounts: results,
+      });
+      setAccounts([]);
+      setSelectedAccountIndexes([]);
+      setFileName("");
+      if (succeeded > 0 && typeof onSuccess === "function") onSuccess();
+    } catch (importError) {
+      setStatus(null);
+      setError(importError?.message || "Failed to import Codex tokens");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleStart = async () => {
     setError("");
-    const workerCount = Number.parseInt(workers, 10);
     const selectedAccounts = selectedAccountIndexes
       .filter((index) => Number.isInteger(index) && index >= 0 && index < accounts.length)
       .map((index) => accounts[index]);
@@ -208,6 +230,22 @@ export default function CodexAutoLoginModal({ isOpen, onClose, onSuccess }) {
       setError("Choose at least one account from a JSON file.");
       return;
     }
+
+    // Import JSON exports contain OAuth tokens and no plaintext password.  The
+    // canonical file shape is shared with Auto Login, so route token-only
+    // records through the existing bulk importer instead of trying to use a
+    // token as a browser password.
+    const tokenAccounts = selectedAccounts.filter((account) => hasCodexTokenPair(account) && !account.password);
+    if (tokenAccounts.length > 0) {
+      if (tokenAccounts.length !== selectedAccounts.length) {
+        setError("Select either token records or email/password records; mixed selections are not supported in one run.");
+        return;
+      }
+      await importTokenAccounts(tokenAccounts);
+      return;
+    }
+
+    const workerCount = Number.parseInt(workers, 10);
     if (!Number.isInteger(workerCount) || workerCount < 1) {
       setError("Workers must be a positive integer.");
       return;
@@ -283,7 +321,7 @@ export default function CodexAutoLoginModal({ isOpen, onClose, onSuccess }) {
     >
       <div className="flex flex-col gap-4">
         <p className="text-sm text-text-muted">
-          Sign in to multiple Codex accounts with Playwright. Credentials are used only to start this job and are never shown in results.
+          Load the same Codex JSON used by Import JSON. Credential records are signed in with Playwright; token records are imported directly. Passwords and tokens are never shown in results.
         </p>
 
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
@@ -378,7 +416,11 @@ export default function CodexAutoLoginModal({ isOpen, onClose, onSuccess }) {
                     className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                   />
                   <span className="min-w-0 truncate text-text-main">{account.email}</span>
-                  {account.totpSecret && <span className="ml-auto text-text-muted">2FA</span>}
+                  {(account.totpSecret || hasCodexTokenPair(account)) && (
+                    <span className="ml-auto shrink-0 text-text-muted">
+                      {[account.totpSecret && "2FA", hasCodexTokenPair(account) && "Tokens"].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>

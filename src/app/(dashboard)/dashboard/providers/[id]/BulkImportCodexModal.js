@@ -5,7 +5,8 @@ import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 import { translate } from "@/i18n/runtime";
 
-const PLACEHOLDER = `{
+const PLACEHOLDER = `[
+  {
     "2fa": null,
     "OPENAI_API_KEY": null,
     "email": "user@example.com",
@@ -17,7 +18,8 @@ const PLACEHOLDER = `{
       "id_token": "eyJhbGc...",
       "refresh_token": "rt_..."
     }
-}`;
+  }
+]`;
 
 // Same caps as the standalone importer GUI (32 MiB JSON body, ~24 MiB ZIP).
 const MAX_ZIP_BYTES = 24 * 1024 * 1024;
