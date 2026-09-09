@@ -135,32 +135,6 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
       ids: due.map((c) => c.id).filter(Boolean),
     });
 
-    await Promise.allSettled(
-      due.map(async (conn) => {
-        try {
-          await refresh(conn);
-          log.info("BG_TOKEN_REFRESH", "Connection refresh finished", {
-            id: conn.id,
-            provider: conn.provider,
-          });
-        } catch (err) {
-          if (conn?.provider === "codex") {
-            await recordCodexRefreshFailure(conn.id, {
-              error: err?.message ?? String(err),
-              code: err?.code,
-              source: "automatic",
-            });
-          }
-          log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
-            id: conn?.id,
-            provider: conn?.provider,
-            error: err?.message ?? String(err),
-          });
-        }
-      })
-    );
-    if (due.length === 0) return;
-
     const baseSensitiveDelay = Number(process.env.BG_REFRESH_GOOGLE_DELAY_MS) || 12_000;
     const baseNormalDelay = Number(process.env.BG_REFRESH_DELAY_MS) || 1_500;
 
@@ -174,6 +148,13 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
           provider: conn.provider,
         });
       } catch (err) {
+        if (conn?.provider === "codex") {
+          await recordCodexRefreshFailure(conn.id, {
+            error: err?.message ?? String(err),
+            code: err?.code,
+            source: "automatic",
+          });
+        }
         log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
           id: conn?.id,
           email: conn?.email || conn?.name || conn?.id,
