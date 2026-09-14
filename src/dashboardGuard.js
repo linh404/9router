@@ -46,6 +46,7 @@ const ALWAYS_PROTECTED = [
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
   "/api/oauth/codex/auto-login",
+  "/api/oauth/codex/auto-login-v2",
 ];
 
 // Require auth, but allow through if requireLogin is disabled

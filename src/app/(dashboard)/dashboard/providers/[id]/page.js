@@ -24,6 +24,7 @@ import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import CodexAutoLoginModal from "./CodexAutoLoginModal";
+import CodexAutoLoginV2Modal from "./CodexAutoLoginV2Modal";
 import CodexRefreshModal from "./CodexRefreshModal";
 import CodexRefreshFailuresModal from "./CodexRefreshFailuresModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
@@ -54,6 +55,7 @@ export default function ProviderDetailPage() {
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
   const [showCodexAutoLogin, setShowCodexAutoLogin] = useState(false);
+  const [showCodexAutoLoginV2, setShowCodexAutoLoginV2] = useState(false);
   const [showCodexRefresh, setShowCodexRefresh] = useState(false);
   const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
   const [codexExportLoading, setCodexExportLoading] = useState(false);
@@ -1657,6 +1659,17 @@ export default function ProviderDetailPage() {
                       {codexLimitLoading ? "Checking limits..." : "Check limit all"}
                     </Button>
                   )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon="fact_check"
+                      onClick={() => setShowCodexAutoLoginV2(true)}
+                      title="Check every Codex connection and log in again only when needed"
+                    >
+                      Auto Login v2
+                    </Button>
+                  )}
                   {selectedConnectionIds.length > 0 && (
                     <Button
                       size="sm"
@@ -1839,6 +1852,17 @@ export default function ProviderDetailPage() {
                       className="w-full sm:w-auto"
                     >
                       Auto Login
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      icon="fact_check"
+                      variant="secondary"
+                      onClick={() => setShowCodexAutoLoginV2(true)}
+                      disabled={connections.length === 0}
+                    >
+                      Auto Login v2
                     </Button>
                   )}
                   {providerId === "grok-cli" && (
@@ -2042,6 +2066,15 @@ export default function ProviderDetailPage() {
             setShowCodexAutoLogin(false);
             setShowBulkImportCodex(true);
           }}
+        />
+      )}
+
+      {providerId === "codex" && (
+        <CodexAutoLoginV2Modal
+          isOpen={showCodexAutoLoginV2}
+          connections={connections}
+          onClose={() => setShowCodexAutoLoginV2(false)}
+          onSuccess={fetchConnections}
         />
       )}
 
