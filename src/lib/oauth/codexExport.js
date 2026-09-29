@@ -24,8 +24,8 @@ function isAuthExpiredMessage(usage) {
  *
  * Internal 9router settings and refresh-failure logs are deliberately not
  * exported.  The optional 2FA/password fields are preserved when they came
- * from a native Codex import; connections created through the OAuth flow use
- * null because 9router does not have those values.
+ * from a native Codex import or Auto Login; ordinary OAuth connections use
+ * null because the OAuth response does not contain a password or 2FA secret.
  */
 export function toCodexImportAccount(connection, credentials = connection) {
   const providerSpecificData = connection?.providerSpecificData || {};
@@ -42,7 +42,12 @@ export function toCodexImportAccount(connection, credentials = connection) {
     for (const source of [connection, providerSpecificData]) {
       for (const field of [key, ...aliases]) {
         if (source && Object.prototype.hasOwnProperty.call(source, field)) {
-          return source[field];
+          const value = source[field];
+          // A redacted/token-only value must not hide a preserved native
+          // credential stored in providerSpecificData.
+          if (value !== undefined && value !== null && !(typeof value === "string" && value.trim() === "")) {
+            return value;
+          }
         }
       }
     }

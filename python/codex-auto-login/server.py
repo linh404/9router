@@ -110,6 +110,27 @@ BACKUP_ROOT = os.path.join(RUNTIME_DIR, "backups")
 # verification sequence so SQLite and JSON always stay consistent.
 _storage_lock = threading.RLock()
 
+# Native Codex imports may carry the credentials used by Auto Login. OAuth
+# refresh/re-login responses do not, and token-only exports encode them as
+# null. Never let those incomplete responses erase a credential already on
+# disk.
+CODEX_PROTECTED_FIELDS = ("password", "codexPassword", "2fa", "twoFactor", "two_factor")
+
+
+def has_protected_value(value):
+    return value is not None and value != "" and not (isinstance(value, str) and not value.strip())
+
+
+def merge_provider_specific_data(existing, incoming):
+    previous = existing if isinstance(existing, dict) else {}
+    current = incoming if isinstance(incoming, dict) else {}
+    merged = dict(previous)
+    merged.update(current)
+    for field in CODEX_PROTECTED_FIELDS:
+        if has_protected_value(previous.get(field)) and not has_protected_value(current.get(field)):
+            merged[field] = previous[field]
+    return merged
+
 
 def is_sidecar_mode():
     return os.environ.get("CODEX_PYTHON_SIDECAR") == "1"
@@ -141,7 +162,7 @@ def backup_file(path, label, ext):
     return bk
 
 
-def build_data_blob(conn):
+def build_data_blob(conn, existing=None):
     now = now_iso()
     raw_refresh = conn.get("refreshToken") or ""
     if isinstance(raw_refresh, str) and raw_refresh.startswith("eyJ"):
@@ -156,7 +177,10 @@ def build_data_blob(conn):
         "lastUsedAt": conn.get("lastUsedAt") or now,
         "consecutiveUseCount": 0,
         "backoffLevel": 0,
-        "providerSpecificData": conn.get("providerSpecificData") or {},
+        "providerSpecificData": merge_provider_specific_data(
+            (existing or {}).get("providerSpecificData") if isinstance(existing, dict) else {},
+            conn.get("providerSpecificData"),
+        ),
         "lastError": None,
         "lastErrorAt": None,
     }
@@ -177,7 +201,7 @@ def build_json_connection(conn, priority=None, existing=None):
         "isActive": True,
         "updatedAt": now,
     })
-    base.update(build_data_blob(conn))
+    base.update(build_data_blob(conn, existing=existing))
     if not base.get("createdAt"):
         base["createdAt"] = now
     return base
@@ -251,11 +275,19 @@ def import_connections_sqlite(connections):
     backup_file(SQLITE_PATH, "9router-sqlite", "sqlite")
     db = sqlite3.connect(SQLITE_PATH, timeout=30)
     cur = db.cursor()
-    cur.execute("SELECT id, email, priority FROM providerConnections WHERE provider=?", (PROVIDER,))
+    cur.execute("SELECT id, email, priority, data FROM providerConnections WHERE provider=?", (PROVIDER,))
     existing_map = {}
     for row in cur.fetchall():
         if row[1]:
-            existing_map[row[1].lower().strip()] = {"id": row[0], "priority": row[2]}
+            try:
+                old_data = json.loads(row[3]) if row[3] else {}
+            except Exception:
+                old_data = {}
+            existing_map[row[1].lower().strip()] = {
+                "id": row[0],
+                "priority": row[2],
+                "data": old_data,
+            }
 
     inserted = 0
     replaced = 0
@@ -269,10 +301,10 @@ def import_connections_sqlite(connections):
         email = (conn.get("email") or conn.get("name") or "").lower().strip()
         name = conn.get("name") or conn.get("email") or "Unknown"
         email_val = conn.get("email") or ""
-        data_json = json.dumps(build_data_blob(conn), ensure_ascii=False)
         try:
             if email and email in existing_map:
                 old = existing_map[email]
+                data_json = json.dumps(build_data_blob(conn, existing=old.get("data")), ensure_ascii=False)
                 cur.execute("DELETE FROM providerConnections WHERE id=? AND provider=?", (old["id"], PROVIDER))
                 new_id = str(uuid.uuid4())
                 cur.execute(
@@ -280,6 +312,7 @@ def import_connections_sqlite(connections):
                     (new_id, PROVIDER, "oauth", name, email_val, old["priority"], 1, data_json, now, now))
                 replaced += 1
             else:
+                data_json = json.dumps(build_data_blob(conn), ensure_ascii=False)
                 new_id = str(uuid.uuid4())
                 cur.execute(
                     "INSERT INTO providerConnections (id,provider,authType,name,email,priority,isActive,data,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?)",

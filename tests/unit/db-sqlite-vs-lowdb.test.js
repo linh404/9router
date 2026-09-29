@@ -101,6 +101,69 @@ describe("DB SQLite layer — public API parity", () => {
     expect(back.providerSpecificData).toEqual({ foo: "bar" });
   });
 
+  it("providerConnections: Codex re-login/import never erases password or 2FA", async () => {
+    const initial = await sqliteDb.createProviderConnection({
+      provider: "codex",
+      authType: "oauth",
+      email: "codex-secret-preservation@example.com",
+      accessToken: "access-old",
+      refreshToken: "refresh-old",
+      providerSpecificData: {
+        chatgptAccountId: "acct-secret-preservation",
+        password: "password-old",
+        "2fa": "totp-old",
+      },
+    });
+
+    const refreshed = await sqliteDb.createProviderConnection({
+      provider: "codex",
+      authType: "oauth",
+      email: "codex-secret-preservation@example.com",
+      accessToken: "access-new",
+      refreshToken: "refresh-new",
+      providerSpecificData: { chatgptAccountId: "acct-secret-preservation" },
+    });
+
+    expect(refreshed.id).toBe(initial.id);
+    expect(refreshed.accessToken).toBe("access-new");
+    expect(refreshed.providerSpecificData).toMatchObject({
+      password: "password-old",
+      "2fa": "totp-old",
+    });
+
+    const tokenOnlyImport = await sqliteDb.createProviderConnection({
+      provider: "codex",
+      authType: "oauth",
+      email: "codex-secret-preservation@example.com",
+      accessToken: "access-newer",
+      refreshToken: "refresh-newer",
+      providerSpecificData: {
+        chatgptAccountId: "acct-secret-preservation",
+        password: null,
+        "2fa": null,
+      },
+    });
+
+    expect(tokenOnlyImport.id).toBe(initial.id);
+    expect(tokenOnlyImport.providerSpecificData).toMatchObject({
+      password: "password-old",
+      "2fa": "totp-old",
+    });
+
+    const updated = await sqliteDb.updateProviderConnection(initial.id, {
+      providerSpecificData: {
+        password: null,
+        "2fa": "",
+        chatgptPlanType: "plus",
+      },
+    });
+    expect(updated.providerSpecificData).toMatchObject({
+      password: "password-old",
+      "2fa": "totp-old",
+      chatgptPlanType: "plus",
+    });
+  });
+
   it("providerConnections: GitHub OAuth uses account identity as fallback name", async () => {
     const c = await sqliteDb.createProviderConnection({
       provider: "github",

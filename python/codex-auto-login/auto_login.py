@@ -137,7 +137,7 @@ def decode_jwt_email(access_token):
         return {"email": "", "account_id": "", "plan_type": ""}
 
 
-def tokens_to_connection(tokens):
+def tokens_to_connection(tokens, password="", totp_secret=""):
     at = tokens.get("access_token", "")
     info = decode_jwt_email(at)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -145,6 +145,18 @@ def tokens_to_connection(tokens):
     exp_at = datetime.fromtimestamp(
         time.time() + exp_in, tz=timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    provider_specific_data = {
+        "chatgptAccountId": info["account_id"],
+        "chatgptPlanType": info["plan_type"],
+    }
+    # Keep the credentials supplied to Auto Login with the resulting
+    # connection so a later export/re-login does not lose them. Existing
+    # values are protected by the 9router repository merge as well.
+    if password:
+        provider_specific_data["password"] = password
+    if totp_secret:
+        provider_specific_data["2fa"] = totp_secret
+
     return {
         "accessToken": at,
         "refreshToken": tokens.get("refresh_token", ""),
@@ -155,10 +167,7 @@ def tokens_to_connection(tokens):
         "lastUsedAt": now,
         "consecutiveUseCount": 0,
         "backoffLevel": 0,
-        "providerSpecificData": {
-            "chatgptAccountId": info["account_id"],
-            "chatgptPlanType": info["plan_type"],
-        },
+        "providerSpecificData": provider_specific_data,
         "lastError": None,
         "lastErrorAt": None,
         "email": info["email"],
@@ -757,7 +766,7 @@ def login_one_account(index, total, account, headed, slow):
                     emit_event("ERROR", email, error=clean_error)
                     return {"email": email, "status": "error", "error": clean_error}
 
-                conn = tokens_to_connection(tokens)
+                conn = tokens_to_connection(tokens, password=password, totp_secret=totp_secret)
                 actual_email = conn.get("email") or email
                 plan = conn.get("providerSpecificData", {}).get("chatgptPlanType", "?")
                 has_rt = bool(conn.get("refreshToken"))

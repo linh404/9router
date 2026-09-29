@@ -254,6 +254,11 @@ async function runBrowserAttempt(account, job) {
       authType: "oauth",
       ...tokenData,
       email: tokenData.email || account.email,
+      providerSpecificData: {
+        ...(tokenData.providerSpecificData || {}),
+        ...(account.password ? { password: account.password } : {}),
+        ...(account.totpSecret ? { "2fa": account.totpSecret } : {}),
+      },
       expiresAt: tokenData.expiresIn ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString() : null,
       testStatus: "active",
     });

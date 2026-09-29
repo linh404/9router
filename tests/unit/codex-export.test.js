@@ -68,6 +68,35 @@ describe("GET /api/oauth/codex/export", () => {
     expect(raw).not.toContain("connectionProxyUrl");
   });
 
+  it("keeps stored password and 2FA when exporting refreshed credentials", async () => {
+    getProviderConnections.mockResolvedValue([
+      {
+        id: "conn-secret",
+        provider: "codex",
+        authType: "oauth",
+        email: "secret@example.com",
+        accessToken: "access-secret",
+        refreshToken: "refresh-secret",
+        password: null,
+        "2fa": null,
+        providerSpecificData: {
+          chatgptAccountId: "acct-secret",
+          password: "password-secret",
+          "2fa": "totp-secret",
+        },
+      },
+    ]);
+
+    const response = await GET();
+    const [account] = JSON.parse(await response.text());
+
+    expect(account).toMatchObject({
+      email: "secret@example.com",
+      password: "password-secret",
+      "2fa": "totp-secret",
+    });
+  });
+
   it("round-trips through the existing Codex file importer", async () => {
     const response = await GET();
     const exported = await response.text();

@@ -10,6 +10,39 @@ const OPTIONAL_FIELDS = [
   "consecutiveUseCount", "idToken", "lastRefreshAt",
 ];
 
+// Native Codex imports may carry the login credentials used by Auto Login.
+// OAuth refresh/re-login responses never carry those fields, and token-only
+// exports represent them as null.  Keep an existing secret when an incoming
+// update omits it or supplies an empty value; otherwise a token refresh could
+// silently erase the credentials needed by the next Auto Login run.
+const CODEX_PROTECTED_FIELDS = ["password", "codexPassword", "2fa", "twoFactor", "two_factor"];
+
+function hasProtectedValue(value) {
+  return value !== undefined
+    && value !== null
+    && !(typeof value === "string" && value.trim() === "");
+}
+
+function mergeProviderSpecificData(existing, incoming, provider) {
+  const hasExistingObject = existing && typeof existing === "object" && !Array.isArray(existing);
+  const hasIncomingObject = incoming && typeof incoming === "object" && !Array.isArray(incoming);
+  if (!hasExistingObject && !hasIncomingObject) return incoming ?? existing;
+
+  const previous = hasExistingObject ? existing : {};
+  const next = hasIncomingObject ? incoming : {};
+  const merged = { ...previous, ...next };
+
+  if (provider === "codex") {
+    for (const field of CODEX_PROTECTED_FIELDS) {
+      if (hasProtectedValue(previous[field]) && !hasProtectedValue(next[field])) {
+        merged[field] = previous[field];
+      }
+    }
+  }
+
+  return merged;
+}
+
 function rowToConn(row) {
   if (!row) return null;
   const extra = parseJson(row.data, {});
@@ -147,7 +180,17 @@ export async function createProviderConnection(data) {
     // access_token: never dedup — user manages duplicates manually
 
     if (existing) {
-      const merged = { ...existing, ...data, updatedAt: now };
+      const providerSpecificData = mergeProviderSpecificData(
+        existing.providerSpecificData,
+        data.providerSpecificData,
+        data.provider || existing.provider
+      );
+      const merged = {
+        ...existing,
+        ...data,
+        ...(providerSpecificData !== undefined ? { providerSpecificData } : {}),
+        updatedAt: now,
+      };
       upsert(db, merged);
       result = merged;
       return;
@@ -196,7 +239,17 @@ export async function updateProviderConnection(id, data) {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
-    const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
+    const providerSpecificData = mergeProviderSpecificData(
+      existing.providerSpecificData,
+      data.providerSpecificData,
+      data.provider || existing.provider
+    );
+    const merged = {
+      ...existing,
+      ...data,
+      ...(providerSpecificData !== undefined ? { providerSpecificData } : {}),
+      updatedAt: new Date().toISOString(),
+    };
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;
