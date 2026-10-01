@@ -1,5 +1,3 @@
-"use server";
-
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -8,6 +6,8 @@ import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
 import { toSpawnAgentModelId } from "@/shared/utils/spawnAgentModel";
+
+export const dynamic = "force-dynamic";
 
 const execAsync = promisify(exec);
 
