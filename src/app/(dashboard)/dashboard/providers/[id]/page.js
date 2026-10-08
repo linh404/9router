@@ -23,7 +23,6 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
-import CodexAutoLoginModal from "./CodexAutoLoginModal";
 import CodexAutoLoginV2Modal from "./CodexAutoLoginV2Modal";
 import CodexRefreshModal from "./CodexRefreshModal";
 import CodexRefreshFailuresModal from "./CodexRefreshFailuresModal";
@@ -56,7 +55,6 @@ export default function ProviderDetailPage() {
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
-  const [showCodexAutoLogin, setShowCodexAutoLogin] = useState(false);
   const [showCodexAutoLoginV2, setShowCodexAutoLoginV2] = useState(false);
   const [showCodexRefresh, setShowCodexRefresh] = useState(false);
   const [codexRefreshLoading, setCodexRefreshLoading] = useState(false);
@@ -1853,11 +1851,6 @@ export default function ProviderDetailPage() {
                         {translate("Import JSON")}
                       </Button>
                     )}
-                    {providerId === "codex" && (
-                      <Button size="sm" icon="rocket_launch" variant="secondary" onClick={() => setShowCodexAutoLogin(true)}>
-                        Auto Login
-                      </Button>
-                    )}
                     {providerId === "grok-cli" && (
                       <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportGrokCli(true)}>
                         {translate("Bulk Add")}
@@ -1930,18 +1923,6 @@ export default function ProviderDetailPage() {
                       className="w-full sm:w-auto"
                     >
                       {translate("Import JSON")}
-                    </Button>
-                  )}
-                  {providerId === "codex" && (
-                    <Button
-                      size="sm"
-                      icon="rocket_launch"
-                      variant="secondary"
-                      onClick={() => setShowCodexAutoLogin(true)}
-                      title="Sign in to multiple Codex accounts in parallel"
-                      className="w-full sm:w-auto"
-                    >
-                      Auto Login
                     </Button>
                   )}
                   {providerId === "codex" && (
@@ -2192,18 +2173,6 @@ export default function ProviderDetailPage() {
           isOpen={showBulkImportCodex}
           onClose={() => setShowBulkImportCodex(false)}
           onSuccess={fetchConnections}
-        />
-      )}
-
-      {providerId === "codex" && (
-        <CodexAutoLoginModal
-          isOpen={showCodexAutoLogin}
-          onClose={() => setShowCodexAutoLogin(false)}
-          onSuccess={fetchConnections}
-          onOpenImport={() => {
-            setShowCodexAutoLogin(false);
-            setShowBulkImportCodex(true);
-          }}
         />
       )}
 

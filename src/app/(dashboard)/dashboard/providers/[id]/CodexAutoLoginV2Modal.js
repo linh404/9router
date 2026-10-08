@@ -199,7 +199,7 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     if (!currentJobId || pollInFlightRef.current) return;
     pollInFlightRef.current = true;
     try {
-      const response = await fetch(`/api/oauth/codex/auto-login/status?jobId=${encodeURIComponent(currentJobId)}`, { cache: "no-store" });
+      const response = await fetch(`/api/oauth/codex/auto-login-v2/status?jobId=${encodeURIComponent(currentJobId)}`, { cache: "no-store" });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `Status request failed (${response.status})`);
       const nextStatus = normalizeStatus(payload);
@@ -253,7 +253,7 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     setLoginError("");
     setLoginStatus({ total: usableAccounts.length, done: 0, failed: 0, running: true, results: [] });
     try {
-      const response = await fetch("/api/oauth/codex/auto-login", {
+      const response = await fetch("/api/oauth/codex/auto-login-v2/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accounts: usableAccounts, workers: workerCount, headed }),
@@ -308,7 +308,7 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     setStopping(true);
     setLoginError("");
     try {
-      const response = await fetch("/api/oauth/codex/auto-login/stop", {
+      const response = await fetch("/api/oauth/codex/auto-login-v2/stop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId: loginJobId }),

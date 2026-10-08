@@ -7,7 +7,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** POST /api/oauth/codex/auto-login/stop { jobId } */
+/** POST /api/oauth/codex/auto-login-v2/stop { jobId } */
 export async function POST(request) {
   let body;
   try {

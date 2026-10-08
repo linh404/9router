@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { parseAccounts } from "@/lib/oauth/codexAutoLogin";
 import {
-  getPythonAutoLogin,
   pythonServiceErrorStatus,
   startPythonAutoLogin,
 } from "@/lib/oauth/codexPythonService";
@@ -10,7 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/oauth/codex/auto-login
+ * POST /api/oauth/codex/auto-login-v2/start
  * Body: { accounts: "email|password|totp\\n..." | [{ email, password, totpSecret }], workers? }
  */
 export async function POST(request) {
@@ -32,22 +31,6 @@ export async function POST(request) {
   } catch (error) {
     return NextResponse.json(
       { error: error.message || "Failed to start auto-login" },
-      { status: pythonServiceErrorStatus(error) }
-    );
-  }
-}
-
-/**
- * GET /api/oauth/codex/auto-login?jobId=...
- */
-export async function GET(request) {
-  const jobId = new URL(request.url).searchParams.get("jobId");
-  if (!jobId) return NextResponse.json({ error: "Missing jobId" }, { status: 400 });
-  try {
-    return NextResponse.json(await getPythonAutoLogin(jobId));
-  } catch (error) {
-    return NextResponse.json(
-      { error: error.message || "Failed to read auto-login status" },
       { status: pythonServiceErrorStatus(error) }
     );
   }
