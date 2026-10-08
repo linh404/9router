@@ -26,6 +26,7 @@ function normalizeStatus(payload) {
 function loginResultStatus(result) {
   const value = String(result?.status || "").toLowerCase();
   if (value === "success" || value === "ok" || result?.ok === true) return "success";
+  if (value === "removed") return "removed";
   if (value === "pending" || value === "queued" || value === "running") return "running";
   return "error";
 }
@@ -48,6 +49,10 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
   const [stopping, setStopping] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [confirmLoginOpen, setConfirmLoginOpen] = useState(false);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupError, setCleanupError] = useState("");
+  const [cleanupResult, setCleanupResult] = useState("");
+  const [confirmCleanupOpen, setConfirmCleanupOpen] = useState(false);
   const fileInputRef = useRef(null);
   const pollTimerRef = useRef(null);
   const pollInFlightRef = useRef(false);
@@ -65,6 +70,12 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
       || (statusTotal > 0 && completed >= statusTotal && loginStatus?.running !== true)
   );
   const loginRunning = Boolean(loginStatus?.running) || (loginBusy && !loginComplete && !loginStatus?.completedAt);
+  const failedLoginResults = useMemo(
+    () => (loginStatus?.results || []).filter(
+      (result) => result?.status === "failed" && Number(result?.attempts) > 0 && result?.id,
+    ),
+    [loginStatus],
+  );
 
   const clearPollTimer = () => {
     if (pollTimerRef.current) {
@@ -86,6 +97,10 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     setStopping(false);
     setLoginError("");
     setConfirmLoginOpen(false);
+    setCleanupBusy(false);
+    setCleanupError("");
+    setCleanupResult("");
+    setConfirmCleanupOpen(false);
   };
 
   useEffect(() => () => clearPollTimer(), []);
@@ -96,7 +111,10 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     if (!file) return;
     setCheckError("");
     setLoginError("");
+    setCleanupError("");
+    setCleanupResult("");
     setCheckResults([]);
+    setLoginStatus(null);
     try {
       const parsed = parseCodexAccountFile(await file.text());
       if (!parsed.records.length) {
@@ -128,7 +146,10 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     setChecking(true);
     setCheckError("");
     setLoginError("");
+    setCleanupError("");
+    setCleanupResult("");
     setCheckResults([]);
+    setLoginStatus(null);
     try {
       const connectionPayload = connections.map(({ id, email, name }) => ({ id, email, name }));
       const response = await fetch("/api/oauth/codex/auto-login-v2/check", {
@@ -209,7 +230,11 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
   const handleLoginAgain = async () => {
     const usableAccounts = matchedFailedAccounts
       .filter(({ usable }) => usable)
-      .map(({ account }) => ({
+      .map(({ result, account }) => ({
+        // Keep the original DB id all the way through the Python job. The
+        // result is later used to remove only the rows whose login actually
+        // failed; generated account-N ids would make that unsafe.
+        id: result.id,
         email: account.email,
         password: account.password,
         totpSecret: account.totpSecret || "",
@@ -248,6 +273,36 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
     }
   };
 
+  const handleDeleteFailedAccounts = async () => {
+    const connectionIds = [...new Set(failedLoginResults.map((result) => result.id).filter(Boolean))];
+    if (!connectionIds.length) return;
+    setCleanupBusy(true);
+    setCleanupError("");
+    setCleanupResult("");
+    try {
+      const response = await fetch("/api/oauth/codex/auto-login-v2/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionIds }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || `Delete request failed (${response.status})`);
+      const deletedIds = Array.isArray(payload.deleted) ? payload.deleted : [];
+      setCleanupResult(`${deletedIds.length} failed account${deletedIds.length === 1 ? "" : "s"} removed from the database.`);
+      setLoginStatus((previous) => previous ? {
+        ...previous,
+        results: previous.results.map((result) => deletedIds.includes(result.id)
+          ? { ...result, status: "removed" }
+          : result),
+      } : previous);
+      if (deletedIds.length > 0 && typeof onSuccess === "function") onSuccess();
+    } catch (error) {
+      setCleanupError(error?.message || "Failed to remove failed Codex accounts.");
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
   const handleStop = async () => {
     if (!loginJobId || stopping) return;
     setStopping(true);
@@ -271,40 +326,42 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
   };
 
   const handleClose = () => {
-    if (checking || loginRunning || stopping) return;
+    if (checking || loginRunning || stopping || cleanupBusy) return;
     reset();
     onClose();
   };
 
   return (
-    <Modal isOpen={isOpen} title="Codex Auto Login v2" onClose={handleClose} closeOnOverlay={!checking && !loginRunning} size="xl">
+    <Modal isOpen={isOpen} title="Codex Auto Login v2" onClose={handleClose} closeOnOverlay={!checking && !loginRunning && !cleanupBusy} size="xl">
       <div className="flex flex-col gap-4">
         <p className="text-sm text-text-muted">
-          Check every saved Codex connection, then sign in again only for accounts that need it. Passwords and tokens are never shown.
+          Check every saved Codex connection, then sign in again only for accounts that need it. Passwords and tokens are never shown. After a real login failure, you can remove only those stale rows from the database.
         </p>
 
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
           <div className="flex min-w-0 flex-col gap-2 text-xs font-medium text-text-main">
             <span>Account file for failed accounts</span>
-            <input ref={fileInputRef} type="file" accept=".json,.jsonl,application/json" className="hidden" onChange={handleFileChange} disabled={loginRunning || checking} />
+            <input ref={fileInputRef} type="file" accept=".json,.jsonl,application/json" className="hidden" onChange={handleFileChange} disabled={loginRunning || checking || cleanupBusy} />
             <div className="flex min-w-0 items-center gap-2">
-              <Button variant="secondary" icon="upload_file" onClick={() => fileInputRef.current?.click()} disabled={loginRunning || checking}>Choose JSON file</Button>
+              <Button variant="secondary" icon="upload_file" onClick={() => fileInputRef.current?.click()} disabled={loginRunning || checking || cleanupBusy}>Choose JSON file</Button>
               <span className="min-w-0 truncate font-normal text-text-muted" title={fileName}>{fileName || "No file selected"}</span>
             </div>
             <span className="font-normal text-text-muted">{accounts.length} account{accounts.length === 1 ? "" : "s"} loaded.</span>
           </div>
           <label className="flex flex-col gap-1.5 text-xs font-medium text-text-main">
             Workers
-            <input type="number" min="1" max="32" step="1" value={workers} onChange={(event) => setWorkers(event.target.value)} disabled={loginRunning || checking} className="h-9 w-24 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary disabled:opacity-60" />
+            <input type="number" min="1" max="32" step="1" value={workers} onChange={(event) => setWorkers(event.target.value)} disabled={loginRunning || checking || cleanupBusy} className="h-9 w-24 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-primary disabled:opacity-60" />
           </label>
           <label className="flex items-center gap-2 pb-2 text-xs text-text-muted sm:whitespace-nowrap">
-            <input type="checkbox" checked={headed} onChange={(event) => setHeaded(event.target.checked)} disabled={loginRunning || checking} className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" />
+            <input type="checkbox" checked={headed} onChange={(event) => setHeaded(event.target.checked)} disabled={loginRunning || checking || cleanupBusy} className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" />
             Show browser windows
           </label>
         </div>
 
         {checkError && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">{checkError}</p>}
         {loginError && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">{loginError}</p>}
+        {cleanupError && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">{cleanupError}</p>}
+        {cleanupResult && <p className="rounded-lg bg-green-500/10 px-3 py-2 text-sm text-green-700 dark:text-green-400">{cleanupResult}</p>}
 
         {(checking || checkResults.length > 0) && (
           <div className="rounded-lg border border-border-subtle bg-surface-2 p-3">
@@ -349,13 +406,22 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted"><span>{loginStatus.stopped ? "Stopped" : loginRunning ? "Logging in..." : "Login finished"}</span><span>{completed}/{statusTotal} completed</span></div>
             <div className="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} /></div>
             {loginStatus.activeAccounts?.length > 0 && <p className="mt-2 truncate text-xs text-text-muted">Active: {loginStatus.activeAccounts.join(" · ")}</p>}
-            {loginStatus.results?.length > 0 && <div className="mt-3 flex flex-col gap-1 text-xs">{loginStatus.results.map((result, index) => <div key={`${result.email || index}`} className="flex justify-between gap-2"><span className="truncate">{result.email || "Unknown account"}</span><span className={loginResultStatus(result) === "success" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{loginResultStatus(result) === "success" ? "Success" : "Failed"}</span></div>)}</div>}
+            {loginStatus.results?.length > 0 && <div className="mt-3 flex flex-col gap-1 text-xs">{loginStatus.results.map((result, index) => {
+              const resultStatus = loginResultStatus(result);
+              return <div key={`${result.email || index}`} className="flex justify-between gap-2"><span className="truncate">{result.email || "Unknown account"}</span><span className={resultStatus === "success" || resultStatus === "removed" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{resultStatus === "success" ? "Success" : resultStatus === "removed" ? "Removed from DB" : "Failed"}</span></div>;
+            })}</div>}
+            {!loginRunning && loginComplete && failedLoginResults.length > 0 && (
+              <div className="mt-3 flex flex-col gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+                <p className="text-xs text-text-main">{failedLoginResults.length} account{failedLoginResults.length === 1 ? "" : "s"} failed after a real login attempt. Remove these stale Codex rows from the database?</p>
+                <Button variant="danger" icon="delete" onClick={() => setConfirmCleanupOpen(true)} loading={cleanupBusy} disabled={cleanupBusy}>Delete failed accounts from DB</Button>
+              </div>
+            )}
           </div>
         )}
 
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="ghost" onClick={handleClose} disabled={checking || loginRunning || stopping}>Close</Button>
-          {loginRunning ? <Button variant="danger" icon="stop" onClick={handleStop} loading={stopping}>Stop Auto Login</Button> : <Button icon="sync" onClick={handleCheck} loading={checking} disabled={connections.length === 0 || accounts.length === 0}>Check All Connections</Button>}
+          <Button variant="ghost" onClick={handleClose} disabled={checking || loginRunning || stopping || cleanupBusy}>Close</Button>
+          {loginRunning ? <Button variant="danger" icon="stop" onClick={handleStop} loading={stopping}>Stop Auto Login</Button> : <Button icon="sync" onClick={handleCheck} loading={checking} disabled={connections.length === 0 || accounts.length === 0 || cleanupBusy}>Check All Connections</Button>}
         </div>
       </div>
       <ConfirmModal
@@ -369,6 +435,19 @@ export default function CodexAutoLoginV2Modal({ isOpen, onClose, onSuccess, conn
         message={`This will run Auto Login for ${matchedFailedAccounts.filter(({ usable }) => usable).length} matched account(s). Accounts without a password record will be skipped.`}
         confirmText="Login Again"
         cancelText="Cancel"
+        variant="danger"
+      />
+      <ConfirmModal
+        isOpen={confirmCleanupOpen}
+        onClose={() => setConfirmCleanupOpen(false)}
+        onConfirm={async () => {
+          setConfirmCleanupOpen(false);
+          await handleDeleteFailedAccounts();
+        }}
+        title="Delete failed Codex accounts?"
+        message={`This will permanently remove ${failedLoginResults.length} Codex connection(s) whose login attempt failed. Successful and cancelled accounts will be kept.`}
+        confirmText="Delete Accounts"
+        cancelText="Keep Accounts"
         variant="danger"
       />
     </Modal>

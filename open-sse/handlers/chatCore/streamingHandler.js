@@ -24,13 +24,20 @@ const CODEX_SOURCE_TO_TARGET = {
 /**
  * Determine which SSE transform stream to use based on provider/format.
  */
-function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, customToolNames, model, connectionId, body, onStreamComplete, apiKey, credentials }) {
-  const isDroidCLI = userAgent?.toLowerCase().includes("droid") || userAgent?.toLowerCase().includes("codex-cli");
+function buildTransformStream({ provider, sourceFormat, targetFormat, reqLogger, toolNameMap, customToolNames, model, connectionId, body, onStreamComplete, apiKey, credentials }) {
   // Responses-API providers (e.g. codex) emit Responses SSE → translate into client format
   const isResponsesProvider = PROVIDERS[provider]?.format === FORMATS.OPENAI_RESPONSES;
-  const needsCodexTranslation = isResponsesProvider && targetFormat === FORMATS.OPENAI_RESPONSES && !isDroidCLI;
+  // Keep native Responses requests in the same-format transform as well. The old
+  // Codex/Droid passthrough applied the OpenAI `choices` content filter to
+  // Responses events, dropping `response.completed` data, and did not track the
+  // `event:` framing. The client then saw only `[DONE]` and reported
+  // `stream closed before response.completed` (especially visible when resuming
+  // an interrupted conversation).
+  const needsResponsesTransform =
+    (isResponsesProvider && targetFormat === FORMATS.OPENAI_RESPONSES) ||
+    (sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES);
 
-  if (needsCodexTranslation) {
+  if (needsResponsesTransform) {
     const codexTarget = CODEX_SOURCE_TO_TARGET[sourceFormat] || FORMATS.OPENAI;
     return createSSETransformStreamWithLogger(FORMATS.OPENAI_RESPONSES, codexTarget, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey, customToolNames, credentials);
   }

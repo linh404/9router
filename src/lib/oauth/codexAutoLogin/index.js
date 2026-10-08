@@ -372,6 +372,7 @@ function parseAccount(value, index) {
   const email = firstNonEmpty(["email", "username"]).trim();
   const password = firstNonEmpty(["password"]);
   if (!email || !password) return null;
+  const id = firstNonEmpty(["id", "connectionId"]).trim() || `account-${index + 1}`;
   const totpSecret = firstNonEmpty([
     "totpSecret",
     "totp",
@@ -383,7 +384,7 @@ function parseAccount(value, index) {
     "2fa",
     "2fa_secret",
   ]).trim();
-  return { id: `account-${index + 1}`, email, password, totpSecret };
+  return { id, email, password, totpSecret };
 }
 
 export function parseAccounts(input) {

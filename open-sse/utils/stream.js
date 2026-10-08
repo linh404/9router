@@ -3,7 +3,7 @@ import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
-import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
+import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, buildOpenAIResponsesFailureEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
@@ -357,7 +357,15 @@ export function createSSEStream(options = {}) {
 
         // Responses same-format passthrough: re-emit with original event framing
         if (keepsOpenAIResponsesFormat && openAIResponsesEventName) {
-          const output = formatSSE({ event: openAIResponsesEventName, data: parsed }, sourceFormat);
+          // A provider-level `error` is terminal, but Codex only treats the
+          // response lifecycle events as completion. Normalize it to
+          // response.failed so the client receives a structured failure instead
+          // of waiting until the socket closes and reporting a truncated stream.
+          const failureEvent = buildOpenAIResponsesFailureEvent(openAIResponsesEventName, parsed);
+          const output = formatSSE(
+            failureEvent || { event: openAIResponsesEventName, data: parsed },
+            sourceFormat,
+          );
           reqLogger?.appendConvertedChunk?.(output);
           controller.enqueue(sharedEncoder.encode(output));
           currentOpenAIResponsesEvent = null;
@@ -471,21 +479,45 @@ export function createSSEStream(options = {}) {
             const extracted = extractUsage(parsed);
             if (extracted) state.usage = mergeUsage(state.usage, extracted);
 
-            const translated = translateResponse(targetFormat, sourceFormat, parsed, state);
-
-            if (translated?._openaiIntermediate) {
-              for (const item of translated._openaiIntermediate) {
-                const openaiOutput = formatSSE(item, FORMATS.OPENAI);
-                reqLogger?.appendOpenAIChunk?.(openaiOutput);
+            // A provider is allowed to close immediately after the final data line,
+            // without the trailing newline that normally makes the transform loop
+            // process it. Preserve Responses event framing here too; routing this
+            // tail through translateResponse() would emit a bare data line and then
+            // synthesize a misleading response.failed event.
+            if (targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI_RESPONSES) {
+              const eventName = getOpenAIResponsesEventName(currentOpenAIResponsesEvent, parsed);
+              if (isOpenAIResponsesTerminalEvent(eventName, parsed)) {
+                openAIResponsesTerminalSeen = true;
               }
-            }
 
-            if (translated?.length > 0) {
-              for (const item of translated) {
-                if (item === null || item === undefined) continue;
-                const output = formatSSE(item, sourceFormat);
-                reqLogger?.appendConvertedChunk?.(output);
-                controller.enqueue(sharedEncoder.encode(output));
+              const failureEvent = eventName
+                ? buildOpenAIResponsesFailureEvent(eventName, parsed)
+                : null;
+              const output = formatSSE(
+                failureEvent || (eventName ? { event: eventName, data: parsed } : parsed),
+                sourceFormat,
+              );
+              reqLogger?.appendConvertedChunk?.(output);
+              controller.enqueue(sharedEncoder.encode(output));
+              sseEmittedCount++;
+              currentOpenAIResponsesEvent = null;
+            } else {
+              const translated = translateResponse(targetFormat, sourceFormat, parsed, state);
+
+              if (translated?._openaiIntermediate) {
+                for (const item of translated._openaiIntermediate) {
+                  const openaiOutput = formatSSE(item, FORMATS.OPENAI);
+                  reqLogger?.appendOpenAIChunk?.(openaiOutput);
+                }
+              }
+
+              if (translated?.length > 0) {
+                for (const item of translated) {
+                  if (item === null || item === undefined) continue;
+                  const output = formatSSE(item, sourceFormat);
+                  reqLogger?.appendConvertedChunk?.(output);
+                  controller.enqueue(sharedEncoder.encode(output));
+                }
               }
             }
           }

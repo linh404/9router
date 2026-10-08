@@ -80,6 +80,84 @@ describe("OpenAI Responses streaming termination", () => {
     expect(output).toContain("data: [DONE]");
   });
 
+  it("normalizes a provider error event into response.failed", async () => {
+    const output = await runTransform([
+      "event: error",
+      `data: ${JSON.stringify({ error: { code: "token_revoked", message: "The refresh token has been invalidated." } })}`,
+      "",
+    ].join("\n"));
+
+    expect(output).toContain("event: response.failed");
+    expect(output).toContain('"code":"token_revoked"');
+    expect(output).toContain("The refresh token has been invalidated.");
+    expect(output).toContain("data: [DONE]");
+    expect(output).not.toContain("stream closed before response.completed");
+  });
+
+  it("uses the SSE event field when the data payload omits type and status", async () => {
+    // Several OpenAI-compatible Responses gateways put the event name only in
+    // `event:` and leave the JSON payload without `type`/`response.status`.
+    // The event framing must still count as terminal; otherwise Codex reports
+    // `stream closed before response.completed` after the gateway closes.
+    const output = await runTransform([
+      "event: response.completed",
+      `data: ${JSON.stringify({ response: { id: "resp_test" } })}`,
+      "",
+    ].join("\n"));
+
+    expect(output).toContain("event: response.completed");
+    expect(output).not.toContain("event: response.failed");
+    expect(output).toContain("data: [DONE]");
+  });
+
+  it("preserves a terminal event when the final data line has no trailing newline", async () => {
+    const output = await runTransform([
+      "event: response.completed",
+      `data: ${JSON.stringify({ response: { id: "resp_test" } })}`,
+    ].join("\n"));
+
+    expect(output).toContain("event: response.completed");
+    expect(output).not.toContain("event: response.failed");
+    expect(output).toContain("data: [DONE]");
+  });
+
+  it("restores event framing from a terminal response status", async () => {
+    const output = await runTransform([
+      `data: ${JSON.stringify({ response: { id: "resp_test", status: "completed" } })}`,
+      "",
+    ].join("\n"));
+
+    expect(output).toContain("event: response.completed");
+    expect(output).not.toContain("event: response.failed");
+    expect(output).toContain("data: [DONE]");
+  });
+
+  it("restores terminal event framing for a status-only tail", async () => {
+    const output = await runTransform([
+      `data: ${JSON.stringify({ response: { id: "resp_test", status: "completed" } })}`,
+    ].join("\n"));
+
+    expect(output).toContain("event: response.completed");
+    expect(output).not.toContain("event: response.failed");
+    expect(output).toContain("data: [DONE]");
+  });
+
+  it.each(["response.incomplete", "response.canceled"]) (
+    "preserves a provider-reported %s terminal event",
+    async (type) => {
+      const output = await runTransform([
+        `event: ${type}`,
+        `data: ${JSON.stringify({ type, response: { id: "resp_test", status: type.slice("response.".length) } })}`,
+        "",
+      ].join("\n"));
+
+      expect(output).toContain(`event: ${type}`);
+      expect(output).not.toContain("event: response.failed");
+      expect(output).not.toContain("stream closed before response.completed");
+      expect(output).toContain("data: [DONE]");
+    },
+  );
+
   it("emits response.failed before DONE when a Responses stream sends DONE without a terminal event", async () => {
     const output = await runTransform([
       `event: response.created`,

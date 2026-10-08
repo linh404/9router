@@ -17,12 +17,6 @@ import { stripCodexUnsupportedPatterns } from "../utils/codexToolSchema.js";
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
 const CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS = ["selected model is at capacity", "model_at_capacity"];
-const CODEX_SSE_USER_OUTPUT_PATTERNS = [
-  "event: response.output_text.delta",
-  "event: response.function_call_arguments.delta",
-  '"type":"response.output_text.delta"',
-  '"type":"response.function_call_arguments.delta"',
-];
 const CODEX_SSE_PEEK_BYTES = 256 * 1024;
 const CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
 function isCodexResponsesLiteModel(model) {
@@ -188,6 +182,83 @@ function extractSseErrorMessage(text, fallback) {
   return fallback || CODEX_MODEL_CAPACITY_MESSAGE;
 }
 
+// Return the first SSE event block only.  Looking at the whole peek buffer can
+// mistake a later error (after response.output_text.delta) for an initial
+// upstream failure and discard useful partial output.
+function extractInitialSseFrame(text, allowPartial = false) {
+  let eventName = null;
+  const dataLines = [];
+  let sawField = false;
+  const lines = String(text || "").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (sawField) {
+        return {
+          complete: true,
+          eventName,
+          data: dataLines.join("\n"),
+          raw: [eventName ? `event: ${eventName}` : "", ...dataLines.map(data => `data: ${data}`)].filter(Boolean).join("\n"),
+        };
+      }
+      continue;
+    }
+    if (trimmed.startsWith(":")) continue;
+    sawField = true;
+    if (trimmed.startsWith("event:")) {
+      eventName = trimmed.slice(6).trim();
+    } else if (trimmed.startsWith("data:")) {
+      dataLines.push(trimmed.slice(5).trim());
+    }
+  }
+
+  if (!allowPartial || !sawField) return null;
+  return {
+    complete: false,
+    eventName,
+    data: dataLines.join("\n"),
+    raw: [eventName ? `event: ${eventName}` : "", ...dataLines.map(data => `data: ${data}`)].filter(Boolean).join("\n"),
+  };
+}
+
+function parseSseFrameData(frame) {
+  if (!frame?.data || frame.data === "[DONE]") return null;
+  try { return JSON.parse(frame.data); } catch { return null; }
+}
+
+function isSseErrorFrame(frame) {
+  const parsed = parseSseFrameData(frame);
+  return frame?.eventName === "error" || parsed?.type === "error" || !!parsed?.error;
+}
+
+// A Codex upstream can answer HTTP 200 and put a terminal provider error in
+// the first SSE frame.  Letting that frame reach the client as a successful
+// stream produces an empty/truncated resumed turn and prevents account
+// fallback.  Classify only the initial error frame here; errors after useful
+// output remain part of the normal stream so the client can see the partial
+// response and terminal failure event.
+function extractSseErrorDetails(text) {
+  const frame = extractInitialSseFrame(text, true);
+  if (!frame || !isSseErrorFrame(frame)) return null;
+  const parsed = parseSseFrameData(frame);
+  if (!parsed) return null;
+
+  const message = findNestedMessage(parsed) || "Codex upstream returned an SSE error";
+  const details = JSON.stringify(parsed).toLowerCase();
+  const embeddedStatus = Number(parsed?.status ?? parsed?.error?.status ?? parsed?.response?.status);
+  const authFailure = embeddedStatus === HTTP_STATUS.UNAUTHORIZED
+    || embeddedStatus === HTTP_STATUS.FORBIDDEN
+    || /token[_ -]?revoked|refresh[_ -]?token[_ -]?invalidated|invalidated oauth token|invalid[_ -]?grant|invalid[_ -]?token|unauthori[sz]ed|authentication/.test(details);
+  const requestFailure = /context[_ -]?length|input[_ -]?too[_ -]?large|invalid[_ -]?request|unsupported|malformed|validation/.test(details);
+
+  return {
+    message,
+    status: authFailure ? HTTP_STATUS.UNAUTHORIZED : (requestFailure ? HTTP_STATUS.BAD_REQUEST : HTTP_STATUS.SERVICE_UNAVAILABLE),
+    accountFallback: authFailure,
+    retryable: !authFailure && !requestFailure,
+  };
+}
+
 function codexSseErrorResponse(status, message) {
   return new Response(JSON.stringify({
     error: {
@@ -307,12 +378,26 @@ export class CodexExecutor extends BaseExecutor {
       }
       if (peek.accountFallback) {
         args.log?.warn?.("RETRY", `CODEX | SSE account fallback "${peek.message}"`);
-        result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || CODEX_MODEL_CAPACITY_MESSAGE);
+        result.response = codexSseErrorResponse(
+          peek.errorStatus || HTTP_STATUS.SERVICE_UNAVAILABLE,
+          peek.message || CODEX_MODEL_CAPACITY_MESSAGE,
+        );
+        return result;
+      }
+      if (peek.errorStatus && peek.retryable === false) {
+        args.log?.warn?.("CODEX", `SSE request error "${peek.message || peek.matched}" (${peek.errorStatus})`);
+        result.response = codexSseErrorResponse(
+          peek.errorStatus,
+          peek.message || peek.matched,
+        );
         return result;
       }
       if (attempt >= attempts) {
         args.log?.warn?.("RETRY", `CODEX | SSE overloaded "${peek.matched}" — retries exhausted (${attempt}/${attempts})`);
-        result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || peek.matched);
+        result.response = codexSseErrorResponse(
+          peek.errorStatus || HTTP_STATUS.SERVICE_UNAVAILABLE,
+          peek.message || peek.matched,
+        );
         return result;
       }
       attempt++;
@@ -333,27 +418,75 @@ export class CodexExecutor extends BaseExecutor {
     let text = "";
     let matched = null;
     let accountFallback = false;
+    let errorStatus = null;
+    let retryable = true;
     try {
       while (text.length < CODEX_SSE_PEEK_BYTES) {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
         text += decoder.decode(value, { stream: true });
-        const lowerText = text.toLowerCase();
-        const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(p => lowerText.includes(p));
-        if (accountHit) { matched = accountHit; accountFallback = true; break; }
-        const retryHit = CODEX_SSE_RETRY_PATTERNS.find(p => lowerText.includes(p));
-        if (retryHit) { matched = retryHit; break; }
-        if (CODEX_SSE_USER_OUTPUT_PATTERNS.some(p => lowerText.includes(p))) break;
+        const initialFrame = extractInitialSseFrame(text);
+        if (!initialFrame?.complete) continue;
+
+        // Only classify an error in the first complete SSE frame. Once a
+        // response.created/output frame is present, let the normal stream
+        // transform deliver it (and any later terminal error) to the client.
+        if (isSseErrorFrame(initialFrame)) {
+          const lowerFrame = initialFrame.raw.toLowerCase();
+          const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(p => lowerFrame.includes(p));
+          if (accountHit) { matched = accountHit; accountFallback = true; break; }
+          const retryHit = CODEX_SSE_RETRY_PATTERNS.find(p => lowerFrame.includes(p));
+          if (retryHit) { matched = retryHit; break; }
+          const sseError = extractSseErrorDetails(text);
+          if (sseError) {
+            matched = "upstream_sse_error";
+            accountFallback = sseError.accountFallback;
+            errorStatus = sseError.status;
+            retryable = sseError.retryable;
+            break;
+          }
+        }
+        break;
       }
     } catch (e) {
       dbg("CODEX", `peek read error: ${e.message}`);
     }
 
+    // A provider may close after a final SSE data line without the usual blank
+    // separator. Classify that frame only after reader.read() reports done.
+    if (!matched) {
+      const initialFrame = extractInitialSseFrame(text, true);
+      if (initialFrame && isSseErrorFrame(initialFrame)) {
+        const lowerFrame = initialFrame.raw.toLowerCase();
+        const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(p => lowerFrame.includes(p));
+        const retryHit = CODEX_SSE_RETRY_PATTERNS.find(p => lowerFrame.includes(p));
+        const sseError = extractSseErrorDetails(text);
+        if (accountHit) {
+          matched = accountHit;
+          accountFallback = true;
+        } else if (retryHit) {
+          matched = retryHit;
+        } else if (sseError) {
+          matched = "upstream_sse_error";
+          accountFallback = sseError.accountFallback;
+          errorStatus = sseError.status;
+          retryable = sseError.retryable;
+        }
+      }
+    }
+
     if (matched) {
       try { await reader.cancel(); } catch { /* noop */ }
       try { reader.releaseLock(); } catch { /* noop */ }
-      return { matched, message: extractSseErrorMessage(text, matched), accountFallback, replacementBody: null };
+      return {
+        matched,
+        message: extractSseErrorMessage(text, matched),
+        accountFallback,
+        errorStatus,
+        retryable,
+        replacementBody: null,
+      };
     }
 
     reader.releaseLock();
